@@ -1,0 +1,21 @@
+# Core: the network, the search, UCI and the trainer
+torch
+numpy
+chess
+scipy
+
+# Data download and conversion (ChessBench, Lichess, Leela)
+requests
+zstandard
+
+# Charts and search tuning
+matplotlib
+optuna
+
+# Optional extras, install only what you use
+# onnxruntime              chess/export_onnx.py
+# torchao                  PRECISION=fp8 in chess/precision.py
+# triton                   COMPILE=1 in chess/train_av.py (triton-windows on Windows)
+# jax[tpu]                 chess/train_jax.py, chess/tpu_bench.py, TPU self-play
+# torch_xla                chess/train_xla.py
+# tensorrt-cu12, onnx      chess/trtnet/, in a separate venv made by chess/trtnet/setup_venv.bat

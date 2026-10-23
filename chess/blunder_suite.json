@@ -1,0 +1,452 @@
+[
+ {
+  "fen": "b7/8/p7/k7/3K4/8/8/8 w - - 0 166",
+  "blunder": "d4c4",
+  "san": "Kc4",
+  "game": "Yxy7cPrh",
+  "source": "analysis_20260926",
+  "sf_before": -155,
+  "sf_after": -720,
+  "sf_best": "d4c3"
+ },
+ {
+  "fen": "2rqrbk1/3b1pp1/3P2np/1p2p2Q/p3p3/2P1B2P/BP3PPN/3R1R1K b - - 0 29",
+  "blunder": "d8h4",
+  "san": "Qh4",
+  "game": "q5ccsyzV",
+  "source": "analysis_20260926",
+  "sf_before": 168,
+  "sf_after": -673,
+  "sf_best": "d7e6"
+ },
+ {
+  "fen": "2rr2k1/1b3ppp/1n3n2/pN2N3/q3P3/3B4/5PPP/1R1RQ1K1 b - - 0 23",
+  "blunder": "b7e4",
+  "san": "Bxe4",
+  "game": "6hofAvWi",
+  "source": "analysis_20260926",
+  "sf_before": -135,
+  "sf_after": -469,
+  "sf_best": "h7h6"
+ },
+ {
+  "fen": "5k2/3R4/2r1p1p1/2r1q1pp/4P3/2p3PP/2R2PK1/2Q5 w - - 3 40",
+  "blunder": "c1a3",
+  "san": "Qa3",
+  "game": "v2puBgld",
+  "source": "analysis_20260926",
+  "sf_before": 0,
+  "sf_after": -588,
+  "sf_best": "c1e3"
+ },
+ {
+  "fen": "1r1q1rk1/p2n1pp1/5np1/2bN2B1/3p4/3Q2P1/P3P1BP/R4RK1 w - - 4 20",
+  "blunder": "f1f2",
+  "san": "Rf2",
+  "game": "1EZe4HOO",
+  "source": "analysis_20260926",
+  "sf_before": -9,
+  "sf_after": -318,
+  "sf_best": "a1c1"
+ },
+ {
+  "fen": "3q1rk1/Q1R3pp/3ppnb1/8/3P4/4PN2/Pr1N2PP/R5K1 b - - 3 17",
+  "blunder": "g6f7",
+  "san": "Bf7",
+  "game": "h9o1gw5R",
+  "source": "analysis_20260926",
+  "sf_before": -43,
+  "sf_after": -229,
+  "sf_best": "f6e8"
+ },
+ {
+  "fen": "4rbk1/2q1rp1p/p1p2pb1/1P6/3NPP2/2P4P/1PQN2P1/3RR1K1 b - - 0 23",
+  "blunder": "c6b5",
+  "san": "cxb5",
+  "game": "VJ2xOKol",
+  "source": "analysis_20260926",
+  "sf_before": -94,
+  "sf_after": -442,
+  "sf_best": "c6c5"
+ },
+ {
+  "fen": "2r4k/5R1p/2B3pB/p1n5/1p1b4/6P1/P6K/8 w - - 2 33",
+  "blunder": "c6f3",
+  "san": "Bf3",
+  "game": "8bKOKkrx",
+  "source": "analysis_20260926",
+  "sf_before": -7,
+  "sf_after": -482,
+  "sf_best": "f7a7"
+ },
+ {
+  "fen": "4q1k1/1p3ppb/5n1p/p3N3/3rP2P/P1R3P1/2Q2PB1/6K1 w - - 1 25",
+  "blunder": "c3c7",
+  "san": "Rc7",
+  "game": "lfZzu7eA",
+  "source": "analysis_20260926",
+  "sf_before": 13,
+  "sf_after": -603,
+  "sf_best": "c3c8"
+ },
+ {
+  "fen": "3r2k1/1Q1P2p1/4q2p/8/1p1R4/6P1/5PK1/8 w - - 7 43",
+  "blunder": "b7c8",
+  "san": "Qc8",
+  "game": "gRibYnwO",
+  "source": "analysis_20260926",
+  "sf_before": 0,
+  "sf_after": -708,
+  "sf_best": "b7c7"
+ },
+ {
+  "fen": "8/4k1p1/p4p1p/Pp2bP1P/1P2p1P1/1KB1P3/8/8 w - - 1 44",
+  "blunder": "c3e5",
+  "san": "Bxe5",
+  "game": "DFeH2FwN",
+  "source": "analysis_20260926",
+  "sf_before": 0,
+  "sf_after": -840,
+  "sf_best": "c3e1"
+ },
+ {
+  "fen": "1r3k2/1q2p2p/3p2p1/p1p1Pp1n/P4P2/1B3P1P/3Qn2B/4R1K1 w - - 0 31",
+  "blunder": "e1e2",
+  "san": "Rxe2",
+  "game": "qrqzwDNY",
+  "source": "analysis_20260926",
+  "sf_before": -159,
+  "sf_after": -463,
+  "sf_best": "d2e2"
+ },
+ {
+  "fen": "4r3/8/p2k1p1P/1pp5/5Pb1/1P3N2/P2K4/5R2 w - - 1 42",
+  "blunder": "d2c1",
+  "san": "Kc1",
+  "game": "Qb4NriW2",
+  "source": "analysis_20260926",
+  "sf_before": -48,
+  "sf_after": -322,
+  "sf_best": "f4f5"
+ },
+ {
+  "fen": "8/pp5R/3Bp3/6p1/3Pb1k1/8/3K2P1/4r3 w - - 0 39",
+  "blunder": "h7b7",
+  "san": "Rxb7",
+  "game": "ZV6YsIzS",
+  "source": "analysis_20260926",
+  "sf_before": -187,
+  "sf_after": -651,
+  "sf_best": "d2e1"
+ },
+ {
+  "fen": "2r2k1r/1q2bpp1/p7/3P1Q1P/1p6/2p1BP2/PP6/K1R4R b - - 0 29",
+  "blunder": "e7f6",
+  "san": "Bf6",
+  "game": "yAQ5mJ0b",
+  "source": "analysis_20260926",
+  "sf_before": 0,
+  "sf_after": -366,
+  "sf_best": "c8d8"
+ },
+ {
+  "fen": "R7/2pk4/4p1p1/n3Pp1p/1P3P1P/r1p3P1/3NK3/8 w - - 0 45",
+  "blunder": "a8a5",
+  "san": "Rxa5",
+  "game": "LEC3JB8q",
+  "source": "analysis_20260926",
+  "sf_before": -24,
+  "sf_after": -834,
+  "sf_best": "b4a5"
+ },
+ {
+  "fen": "r3q1k1/1b3ppp/8/1pP2P2/4P3/P1Q3P1/5B1P/4RK2 b - - 2 32",
+  "blunder": "b7e4",
+  "san": "Bxe4",
+  "game": "dTmdbUms",
+  "source": "analysis_20260926",
+  "sf_before": 0,
+  "sf_after": -671,
+  "sf_best": "a8a4"
+ },
+ {
+  "fen": "6r1/p1pbbk2/8/3r2B1/P7/1P4Np/4R3/5RK1 b - - 5 32",
+  "blunder": "f7e8",
+  "san": "Ke8",
+  "game": "LJDbfKB6",
+  "source": "analysis_20260926",
+  "sf_before": 0,
+  "sf_after": -427,
+  "sf_best": "d7f5"
+ },
+ {
+  "fen": "r3n2k/1r3pp1/3p3p/q2N1Q2/4P3/7P/p1R2PPK/R7 b - - 3 33",
+  "blunder": "b7a7",
+  "san": "Rba7",
+  "game": "U5squFVo",
+  "source": "analysis_20260926",
+  "sf_before": -18,
+  "sf_after": -633,
+  "sf_best": "a8b8"
+ },
+ {
+  "fen": "8/ppp3R1/2n5/8/4p3/PPn4k/2P1K3/8 w - - 0 36",
+  "blunder": "e2e3",
+  "san": "Ke3",
+  "game": "uUv0I15Q",
+  "source": "analysis_20260926",
+  "sf_before": -4,
+  "sf_after": -503,
+  "sf_best": "e2d2"
+ },
+ {
+  "fen": "8/8/2k2p1p/5P2/3pK3/1P3N1P/8/b7 b - - 16 52",
+  "blunder": "c6c5",
+  "san": "Kc5",
+  "game": "3NOFr9Ws",
+  "source": "analysis_20260926",
+  "sf_before": -40,
+  "sf_after": -324,
+  "sf_best": "d4d3"
+ },
+ {
+  "fen": "1R5Q/p4p2/2p3kp/6p1/8/3r1qP1/P4P1P/6K1 w - - 12 40",
+  "blunder": "h8g8",
+  "san": "Qg8+",
+  "game": "XPkmeZQR",
+  "source": "analysis_20260926",
+  "sf_before": -190,
+  "sf_after": -688,
+  "sf_best": "b8b1"
+ },
+ {
+  "fen": "k7/p4ppp/N3pn2/3p4/P2P4/3NPP2/1r4Pb/2R2K2 b - - 1 33",
+  "blunder": "b2a2",
+  "san": "Ra2",
+  "game": "m00kHX2b",
+  "source": "analysis_20260926",
+  "sf_before": -24,
+  "sf_after": -442,
+  "sf_best": "b2b6"
+ },
+ {
+  "fen": "5rk1/p3ppbp/1qB3p1/8/2Q1P1P1/8/Pr1B2PP/2R1KR2 b - - 3 20",
+  "blunder": "e7e6",
+  "san": "e6",
+  "game": "c6bz4eMT",
+  "source": "analysis_20260928",
+  "sf_before": -24,
+  "sf_after": -316,
+  "sf_best": "f8d8"
+ },
+ {
+  "fen": "5r2/2p3pk/2p3pq/2P4r/p2PRP2/6Q1/PP4K1/3R4 b - - 0 33",
+  "blunder": "h5h4",
+  "san": "Rh4",
+  "game": "NoAtjZQO",
+  "source": "analysis_20260928",
+  "sf_before": 467,
+  "sf_after": 4,
+  "sf_best": "g6g5"
+ },
+ {
+  "fen": "1r5k/bQ4pp/p7/2p3q1/3P4/2P4b/PP3PPP/4RRK1 b - - 2 22",
+  "blunder": "c5d4",
+  "san": "cxd4",
+  "game": "JfR22NSz",
+  "source": "analysis_20260928",
+  "sf_before": -125,
+  "sf_after": -1000,
+  "sf_best": "h7h6"
+ },
+ {
+  "fen": "B7/8/4k1p1/5b2/5P1p/5K2/8/8 w - - 8 63",
+  "blunder": "f3e2",
+  "san": "Ke2",
+  "game": "B9kv6BF8",
+  "source": "analysis_20260928",
+  "sf_before": 0,
+  "sf_after": -597,
+  "sf_best": "a8c6"
+ },
+ {
+  "fen": "8/p7/1p2p3/1P1pP1pk/P2P1n2/5P1p/5KP1/5B2 w - - 0 54",
+  "blunder": "g2h3",
+  "san": "gxh3",
+  "game": "xJmvNkRE",
+  "source": "analysis_20260928",
+  "sf_before": -93,
+  "sf_after": -643,
+  "sf_best": "g2g3"
+ },
+ {
+  "fen": "7r/6p1/p3q1k1/5p1p/3Qp3/6P1/5NKP/3B4 w - - 8 43",
+  "blunder": "h2h4",
+  "san": "h4",
+  "game": "5RI6hPM7",
+  "source": "analysis_20260928",
+  "sf_before": -35,
+  "sf_after": -543,
+  "sf_best": "f2h3"
+ },
+ {
+  "fen": "8/2kb1p2/4p2p/pBPp2p1/Pp4P1/1P2PP2/2K3P1/8 w - - 7 49",
+  "blunder": "e3e4",
+  "san": "e4",
+  "game": "hsBibBGe",
+  "source": "analysis_20260928",
+  "sf_before": -37,
+  "sf_after": -617,
+  "sf_best": "c2d3"
+ },
+ {
+  "fen": "8/6p1/R2n3p/3kpP1P/1p4P1/5P2/2r2NK1/8 w - - 0 67",
+  "blunder": "a6b6",
+  "san": "Rb6",
+  "game": "y3cI0XkW",
+  "source": "analysis_20260928",
+  "sf_before": -50,
+  "sf_after": -559,
+  "sf_best": "g2g3"
+ },
+ {
+  "fen": "R7/6pk/7p/1p2r2P/4nN2/5K2/5P2/8 w - - 19 49",
+  "blunder": "f4g6",
+  "san": "Ng6",
+  "game": "SmEb733E",
+  "source": "analysis_20260928",
+  "sf_before": -80,
+  "sf_after": -272,
+  "sf_best": "a8b8"
+ },
+ {
+  "fen": "5rk1/bppqn1rb/p2pRp2/P2P2p1/2BP2QN/2B4P/1P5K/4R3 w - - 2 27",
+  "blunder": "e6e7",
+  "san": "Rxe7",
+  "game": "VIfa8Ota",
+  "source": "analysis_20260928",
+  "sf_before": -34,
+  "sf_after": -405,
+  "sf_best": "g4e2"
+ },
+ {
+  "fen": "1nr2rk1/5p1p/1qNp1bpP/1pnPp3/p3P3/4BP2/PP1QN1P1/2RR2K1 w - - 6 27",
+  "blunder": "d2a5",
+  "san": "Qa5",
+  "game": "x0GtQWEE",
+  "source": "analysis_20260928",
+  "sf_before": 203,
+  "sf_after": -563,
+  "sf_best": "b2b4"
+ },
+ {
+  "fen": "r3kb1r/1pq2ppp/p1n1pn2/3pNb2/3P2P1/1QN1P3/PP2BP1P/R1B1K2R b KQkq - 0 10",
+  "blunder": "c6e5",
+  "san": "Nxe5",
+  "game": "bcMVzfLb",
+  "source": "analysis_20260928",
+  "sf_before": 23,
+  "sf_after": -277,
+  "sf_best": "f5e4"
+ },
+ {
+  "fen": "5r1k/b1p1R1p1/p5bp/1p6/7P/1BP3B1/PP1r1PPK/5R2 b - - 3 29",
+  "blunder": "a7f2",
+  "san": "Bxf2",
+  "game": "Hcd7VH0U",
+  "source": "analysis_20260928",
+  "sf_before": -249,
+  "sf_after": -564,
+  "sf_best": "a7b8"
+ },
+ {
+  "fen": "4k3/1p4B1/p2bP3/P7/2p2PK1/2Pr3p/4R3/8 b - - 1 55",
+  "blunder": "d3d1",
+  "san": "Rd1",
+  "game": "TbjeNYgA",
+  "source": "analysis_20260928",
+  "sf_before": -8,
+  "sf_after": -515,
+  "sf_best": "e8e7"
+ },
+ {
+  "fen": "3r1k2/2Q1bpp1/p3pnp1/6q1/1BR5/4PP2/PP2K1P1/5B2 b - - 8 25",
+  "blunder": "f6d5",
+  "san": "Nd5",
+  "game": "EP1aUVhK",
+  "source": "analysis_20260928",
+  "sf_before": -291,
+  "sf_after": -1000,
+  "sf_best": "d8e8"
+ },
+ {
+  "fen": "rnbqk2r/p3bppp/2p2n2/3p4/3N1B2/PBN5/1PP2PPP/R2QK2R b KQkq - 1 14",
+  "blunder": "e8g8",
+  "san": "O-O",
+  "game": "TTwAiFg5",
+  "source": "analysis_20260928",
+  "sf_before": -41,
+  "sf_after": -238,
+  "sf_best": "c8d7"
+ },
+ {
+  "fen": "r3r1k1/2pqRppp/5n2/p2p2B1/3Q2b1/1N1B4/PPP2PPP/R5K1 b - - 0 16",
+  "blunder": "e8e7",
+  "san": "Rxe7",
+  "game": "cAwICgyb",
+  "source": "analysis_20260928",
+  "sf_before": -135,
+  "sf_after": -577,
+  "sf_best": "d7e7"
+ },
+ {
+  "fen": "4r1k1/2Q2pp1/8/3P3r/P1P2P2/2N3bb/P7/3R2K1 b - - 0 33",
+  "blunder": "e8e3",
+  "san": "Re3",
+  "game": "krWKjwsw",
+  "source": "analysis_20260928",
+  "sf_before": 415,
+  "sf_after": 0,
+  "sf_best": "h5h6"
+ },
+ {
+  "fen": "1R2b3/4k3/8/6Pp/5K1P/r3N3/8/8 b - - 6 48",
+  "blunder": "e8g6",
+  "san": "Bg6",
+  "game": "NwYWFRhr",
+  "source": "analysis_20260928",
+  "sf_before": -31,
+  "sf_after": -457,
+  "sf_best": "a3a4"
+ },
+ {
+  "fen": "2kr3r/pp1b3q/2pN4/3pQ3/8/2P5/PP3PPP/4R1K1 b - - 1 23",
+  "blunder": "c8b8",
+  "san": "Kb8",
+  "game": "lKdyvYu8",
+  "source": "analysis_20260928",
+  "sf_before": 0,
+  "sf_after": -1000,
+  "sf_best": "c8c7"
+ },
+ {
+  "fen": "3q4/5k2/2p1p1p1/1pPp1bR1/rP1B1P1r/p3Q1RP/P6K/8 b - - 23 53",
+  "blunder": "a4b4",
+  "san": "Rxb4",
+  "game": "ImvuBOVp",
+  "source": "analysis_20260928",
+  "sf_before": 0,
+  "sf_after": -1000,
+  "sf_best": "d8c7"
+ },
+ {
+  "fen": "2r2rk1/5pp1/p6p/1p4q1/8/Q7/PP2RPPP/4R1K1 b - - 5 26",
+  "blunder": "c8c1",
+  "san": "Rc1",
+  "game": "l0C6eb2g",
+  "source": "analysis_20260928",
+  "sf_before": -27,
+  "sf_after": -966,
+  "sf_best": "g5f6"
+ }
+]

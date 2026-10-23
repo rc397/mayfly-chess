@@ -1,0 +1,8 @@
+{"when": "2026-09-21 19:56", "network": "MayFly v1", "base": "mayfly_v1.pt", "opts": {}, "visits": 400, "solved": 159, "n": 500, "rate": 0.318}
+{"when": "2026-09-21 20:04", "network": "MayFly v2", "base": "mayfly_v2.pt", "opts": {}, "visits": 400, "solved": 146, "n": 500, "rate": 0.292}
+{"when": "2026-10-08 10:29", "network": "mayfly_v5", "base": "mayfly_v5.pt", "opts": {}, "visits": 400, "solved": 444, "n": 500, "rate": 0.888}
+{"when": "2026-10-08 18:11", "network": "mayfly_v5", "base": "mayfly_v5.pt", "opts": {}, "visits": 0, "solved": 366, "n": 500, "rate": 0.732}
+{"when": "2026-10-08 18:18", "network": "MayFly v4", "base": "mayfly_v4.pt", "opts": {}, "visits": 0, "solved": 293, "n": 500, "rate": 0.586}
+{"when": "2026-10-08 18:23", "network": "MayFly v3", "base": "mayfly_v3.pt", "opts": {}, "visits": 0, "solved": 200, "n": 500, "rate": 0.4}
+{"when": "2026-10-08 18:30", "network": "MayFly v2", "base": "mayfly_v2.pt", "opts": {}, "visits": 0, "solved": 104, "n": 500, "rate": 0.208}
+{"when": "2026-10-08 18:38", "network": "MayFly v1", "base": "mayfly_v1.pt", "opts": {}, "visits": 0, "solved": 105, "n": 500, "rate": 0.21}

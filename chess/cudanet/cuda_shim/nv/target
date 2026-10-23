@@ -1,0 +1,13 @@
+/* A stand-in, not NVIDIA's file (see crt/host_defines.h). NVIDIA's nv/target ships with nvcc and CCCL, which
+ * headers taken from pip wheels lack, and cublasLt.h pulls it in through cuda_fp16.h. In a host-only MSVC
+ * translation unit every target query the fp16 and bf16 headers ask (NV_IS_DEVICE, NV_PROVIDES_SM_xx) is false, so
+ * NV_IF_ELSE_TARGET keeps its else block and NV_IF_TARGET keeps nothing. The 12.8 headers pass the blocks bare (not
+ * in parentheses), which is all this handles. NVRTC provides the real header itself, so this folder is never on a
+ * kernel compile's include path. */
+#pragma once
+#if defined(__CUDACC__) || defined(__CUDA_ARCH__)
+#error "cuda_shim is for host-only MSVC compilation"
+#endif
+
+#define NV_IF_ELSE_TARGET(q, t, f) f
+#define NV_IF_TARGET(q, t)

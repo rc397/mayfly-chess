@@ -1,0 +1,83 @@
+# Data, checkpoints and frozen versions live under MAYFLY_DATA (default data/ next to the repo)
+data/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.engine
+*.cnw
+*.ts
+*.ts.json
+*.cubin
+
+# Local tools and downloads written beside the code
+tools/
+chess/stockfish_path.txt
+chess/twic/
+chess/gm_pgn/
+chess/lichess_pgn/
+chess/figs/
+chess/crashes/
+
+# Corpora and shards written by the data scripts
+*.bin
+*.bag
+*.pgn
+*.pgn.zst
+*.jsonl.zst
+*.csv.zst
+*.rtbw
+*.rtbz
+
+# Native builds
+build/
+dist/
+*.egg-info/
+*.pyd
+*.so
+*.dll
+*.lib
+*.exp
+*.obj
+*.o
+*.pdb
+*.ilk
+
+# Logs and runtime state
+*.log
+*.err
+*.pid
+.pid_*.txt
+*.flag
+*.on
+*.paused
+chess/autostart.json
+chess/running.json
+_abq/snap*/
+_abq/logs/
+_abq/queue.txt
+_abq/done.txt
+_abq/results*.jsonl
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+venv/
+env/
+*_venv/
+
+# Caches and editor files
+.cache/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
