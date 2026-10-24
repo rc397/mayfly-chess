@@ -14,6 +14,11 @@ move. It plays through a batched PUCT tree search.
 
 MayFly speaks UCI, so any chess GUI or match runner can use it, and it comes with a small board that runs in a browser.
 
+## Acknowledgements
+
+MayFly's training is supported by an AI Builder Grant from [CloudRift](https://cloudrift.ai), which provides GPU
+cloud compute.
+
 ## Results
 
 These are measured results for v5, the latest released version, and for the CUDA backend. The research notes they
