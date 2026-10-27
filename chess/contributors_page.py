@@ -47,13 +47,13 @@ def gather():
 
 
 def text(rows):
-    lines = [f"MayFly {VERSION}: top contributors (self-play and deep labels donated)", f"updated {time.strftime('%Y-%m-%d')}", ""]
+    lines = [f"MayFly {VERSION} top contributors (self-play and deep labels donated)", f"updated {time.strftime('%Y-%m-%d')}", ""]
     if not rows:
-        lines.append(f"No contributions yet. Be the first: {NOTEBOOK}")
+        lines.append(f"No contributions yet. Be the first at {NOTEBOOK}")
     for i, r in enumerate(rows, 1):
         lines.append(f"{i:>3}. {r['name']:<28} {r['positions']:>12,} positions  {r['games']:>8,} games  "
                      f"{r['labels']:>8,} deep labels")
-    lines += ["", f"Join: {NOTEBOOK}", f"Code: {REPO}"]
+    lines += ["", f"Join at {NOTEBOOK}", f"Code at {REPO}"]
     return "\n".join(lines) + "\n"
 
 
@@ -81,7 +81,8 @@ table {{ border-collapse:collapse; width:100%; }}
 th, td {{ padding:8px 10px; text-align:left; border-bottom:1px solid var(--line); }}
 th {{ color:var(--soft); font-weight:500; font-size:.85rem; }}
 .n {{ text-align:right; font-variant-numeric:tabular-nums; }} a {{ color:inherit; }}
-h2 {{ font-size:1.1rem; margin:36px 0 8px; }} ol {{ margin:0 0 12px; padding-left:1.4em; }} li {{ margin:6px 0; }}
+h2 {{ font-size:1.1rem; margin:36px 0 8px; }} h3 {{ font-size:1rem; margin:24px 0 6px; }}
+ol {{ margin:0 0 12px; padding-left:1.4em; }} li {{ margin:6px 0; }}
 </style></head><body><main>
 <h1>MayFly Contributors</h1>
 <p class=soft>{len(rows)} contributors, {total_g:,} games, {total_p:,} positions, {total_l:,} deep labels.
@@ -91,19 +92,28 @@ h2 {{ font-size:1.1rem; margin:36px 0 8px; }} ol {{ margin:0 0 12px; padding-lef
 <a href="topcontributors.txt">topcontributors.txt</a></p>
 
 <h2 id="join">How to join the cause</h2>
-<p class=soft>About two minutes, free, and nothing runs on your own computer: you lend MayFly Kaggle's cloud computers.</p>
+<p class=soft>Two ways to help. Both are free.</p>
+
+<h3>Option 1. Kaggle, in your browser</h3>
+<p class=soft>Works on any computer, even a Mac or a laptop with no graphics card. Kaggle's cloud computers do the work.</p>
 <ol>
-<li>Make a free account at <a href="https://www.kaggle.com">kaggle.com</a> ("Sign in with Google" is quickest).</li>
-<li>Optional, but it makes your help about 100 times bigger: click your picture, then Settings, then Phone
+<li>Make a free account at <a href="https://www.kaggle.com">kaggle.com</a>. Sign in with Google is the quickest.</li>
+<li>Optional, but it makes your help about 100 times bigger. Click your picture, then Settings, then Phone
 verification. That unlocks Kaggle's free TPU.</li>
 <li>Open the <a href="{NOTEBOOK}">MayFly notebook</a> and click <b>Copy &amp; Edit</b>.</li>
-<li>If you verified your phone: under Session options, set Accelerator to <b>TPU VM v5e-8</b>. If not, leave it.</li>
-<li>Click <b>Save Version</b>, keep "Save &amp; Run All (Commit)", and click <b>Save</b>.</li>
-<li>Click <b>Share</b> and set it to <b>Public</b>, so we can collect what your run made.</li>
+<li>If you verified your phone, set Accelerator to <b>TPU VM v5e-8</b> under Session options. If not, leave it.</li>
+<li>Click <b>Save Version</b>, keep Save &amp; Run All (Commit), and click <b>Save</b>.</li>
+<li>Click <b>Share</b> and set it to <b>Public</b> so we can collect what your run made.</li>
 </ol>
-<p class=soft>That's it. It runs for 8 to 11 hours and you can close the tab. With a TPU it plays MayFly against itself;
-without one it analyses hard positions deeply with Stockfish. Kaggle gives fresh free hours every week, so open your
-copy under Your Work and press Save Version again. Your Kaggle name shows up here once your run has been checked.</p>
+<p class=soft>That's it. It runs for 8 to 11 hours and you can close the tab. With a TPU it plays MayFly against itself,
+and without one it analyses hard positions deeply with Stockfish. Kaggle gives fresh free hours every week, so open
+your copy under Your Work and press Save Version again.</p>
+
+<h3>Option 2. Your own graphics card</h3>
+<p class=soft>Coming soon. A small app you download and open, pick your GPU and how much of it to give, and press Run.
+It plays MayFly self-play on your computer and sends the games in under your name.</p>
+
+<p class=soft>Your name shows up on the board once your games have been checked.</p>
 </main></body></html>
 """
 
