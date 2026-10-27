@@ -1,5 +1,7 @@
 # MayFly
 
+**[Contributors and how to help train MayFly](https://rc397.github.io/mayfly-chess/)**
+
 MayFly is a chess engine built on a transformer network of about 146 million parameters. The network reads a position
 as 64 square tokens and a summary token, and predicts a policy over moves and the win probability of every legal
 move. It plays through a batched PUCT tree search.
