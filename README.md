@@ -19,30 +19,39 @@ MayFly speaks UCI, so any chess GUI or match runner can use it, and it comes wit
 MayFly's training is supported by an AI Builder Grant from [CloudRift](https://cloudrift.ai), which provides GPU
 cloud compute.
 
+## Help train MayFly
+
+MayFly learns from its own games and from deep Stockfish analysis, and you can lend it free compute on Kaggle. Open
+the [volunteer notebook](https://www.kaggle.com/code/rc7530/mayfly-selfplay-volunteer), click Copy & Edit, then Save
+Version. With a TPU (Settings > Accelerator) it plays MayFly self-play; without one it labels hard positions with
+Stockfish. Everyone who helps is on the [contributors page](https://rc397.github.io/mayfly-chess/).
+
 ## Results
 
-These are measured results for v5, the latest released version, and for the CUDA backend. The research notes they
-come from are summarised in [docs/](docs/).
+These are measured results for v6, the latest released version (24 October 2026), and for the CUDA backend. The
+research notes they come from are summarised in [docs/](docs/).
 
 ### Against Stockfish
 
 Stockfish 18 at 100 ms a move with 2 threads and a 256 MB hash, 24 games for each cell. A level is held when MayFly
 scores more than half the points.
 
-| MayFly v5 | highest level held | first level failed |
+| MayFly v6 | highest level held | first level failed |
 |---|---|---|
-| network alone, no search | Skill 8, 58.3% | Skill 9, 25.0% |
-| 400 visits a move | Skill 10, 75.0% | Skill 11, 45.8% |
-| 1,600 visits a move | Skill 18, 66.7% | Skill 19, exactly 50.0% |
-| 6,400 visits a move | Skill 19, 75.0% | Skill 20, 22.9% |
+| network alone, no search | Skill 8, 54.2% | Skill 9, 43.8% |
+| 400 visits a move | Skill 13, 60.4% | Skill 14, 47.9% |
+| 1,600 visits a move | Skill 19, 54.2% | Skill 20, 27.1% |
+| 6,400 visits a move | Skill 19, 66.7% | Skill 20, 45.8% |
 
-### Other measurements of v5
+v5 held the same level at 6,400 visits (Skill 19, 75.0%) but scored 22.9% at Skill 20, and held Skill 10 at 400
+visits and Skill 18 at 1,600.
 
-- 500 only-move tactics positions taken from master games, 73.2% solved with no search and 88.8% at 400 visits.
-- 503 rated Lichess puzzles, a puzzle rating of 1,927 with no search and 2,830 at 400 visits. A puzzle rating
-  measures how hard puzzles are for people and is not a playing rating.
-- With no search, v5's network scored 78.0% against v4's over 100 games from a 50-opening book. At 400 visits v5
-  scored 57.5% against v4 at 6,400 visits.
+### Other measurements of v6
+
+- 503 rated Lichess puzzles: a puzzle rating of 1,993 with no search, 2,866 at 400 visits and 3,043 at 1,600 (v5:
+  1,927 and 2,830). A puzzle rating measures how hard puzzles are for people and is not a playing rating.
+- 300 moves from opening book positions, kept within 30 centipawns of Stockfish's best: 94.7% with no search, 96.0%
+  at 400 visits and 97.3% at 1,600.
 
 ### The CUDA backend
 
@@ -75,6 +84,8 @@ chess/                     the engine, the trainer, the data tools and the measu
   data_av.py, data_packed.py, pack.py, pack_av.py    record formats and loaders
   chessbench.py, fetch_lichess_evals.py, lichess_to_av.py, lc0_convert.py, lc0_pool.py    data conversion
   selfplay.py, deep_label.py, hard_positions.py      self-play and Stockfish labelling
+  kaggle_selfplay.py       the volunteer notebook (self-play on a TPU or GPU, labelling on a CPU)
+  kaggle_volunteer_collect.py, contributors_page.py  collecting volunteers' runs and the contributors page
   elo_vs_sf.py, clock_match.py, search_match.py, round_robin.py    matches and ladders
   tactics_suite.py, lichess_puzzles.py, opening_suite.py, blunder_suite.py    position suites
   harness.py, selftest.py  tests, among them that sealed versions still play the same moves
