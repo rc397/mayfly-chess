@@ -18,6 +18,7 @@ Three things keep the positions varied.
   env: TAG=mayfly VERSION=  (a file in the versions folder, else the live checkpoint)
        VISITS=400 TEMP_PLIES=20 OPENING_FRAC=0.6 OUT (default paths.under("selfplay", "positions.txt"))
        MAX_PLIES=200 BATCH=48 ROOT_NOISE=0.25 NOISE_ALPHA=10.83 (ROOT_NOISE=0 turns it off)
+       FULL_FRAC=1 FAST_VISITS=200 (FULL_FRAC=0.25 gives a quarter of moves the full search)
 """
 import os, sys, time, json, random, glob
 import numpy as np
@@ -42,6 +43,12 @@ NOISE_ALPHA = float(E("NOISE_ALPHA", 10.83))
 # outgrow the teacher.
 TARGETS = E("TARGETS", "1") == "1"
 TARGETS_OUT = E("TARGETS_OUT", paths.under("selfplay", "targets.jsonl"))
+# Cheap moves (KataGo's playout cap randomization): only FULL_FRAC of moves get the full search and become
+# targets. The rest get FAST_VISITS and no root noise, which makes each game much cheaper. Their positions go
+# to FAST_OUT with the search value and the game result. FULL_FRAC=1 is the old behaviour.
+FULL_FRAC = float(E("FULL_FRAC", 1.0))
+FAST_VISITS = int(E("FAST_VISITS", 200))
+FAST_OUT = E("FAST_OUT", TARGETS_OUT.replace(".jsonl", "_fast.jsonl"))
 # How often to look for a newer checkpoint, in games. Between games only, so a game is never
 # played by two different models.
 RELOAD_GAMES = int(E("RELOAD_GAMES", 25))
@@ -190,7 +197,7 @@ def with_noise(tree, rng):
     return tree
 
 
-def play(model, device, rng, tree, rows=None):
+def play(model, device, rng, tree, rows=None, fast=None):
     """One game. Returns the positions it passed through, as FENs.
 
     With `rows` it also keeps what the search thought, as in AlphaZero and Leela. The policy target
@@ -202,16 +209,21 @@ def play(model, device, rng, tree, rows=None):
     """
     b = chess.Board() if rng.random() < OPENING_FRAC else random_corpus_board(rng)
     seen = []
-    mine = []
+    mine, fast_mine = [], []
     tree.reset()
     for ply in range(MAX_PLIES):
         if b.is_game_over() or not list(b.legal_moves):
             break
         seen.append(b.fen())
-        mv, info = tree.search(b, visits=VISITS)
+        full = FULL_FRAC >= 1.0 or rng.random() < FULL_FRAC
+        tree.root_noise = ROOT_NOISE if full else 0.0
+        mv, info = tree.search(b, visits=VISITS if full else FAST_VISITS)
         if mv is None:
             break
-        if rows is not None:
+        if fast is not None and not full:
+            fast_mine.append({"fen": b.fen(), "ply": ply, "stm": "w" if b.turn == chess.WHITE else "b",
+                              "q": round(float(info.get("q", 0.0)), 4), "fast": FAST_VISITS})
+        if rows is not None and full:
             root = getattr(tree, "root", None)
             n = root.N.astype(np.float64) if root is not None and root.N is not None else None
             if n is not None and n.sum() > 0:
@@ -242,11 +254,13 @@ def play(model, device, rng, tree, rows=None):
         res = b.result(claim_draw=True) if b.is_game_over(claim_draw=True) else "*"
         z = {"1-0": 1.0, "0-1": 0.0, "1/2-1/2": 0.5}.get(res)
         gid = format(int(time.time() * 1000), "x") + format(rng.randrange(1 << 16), "04x")
-        for r in mine:
+        for r in mine + fast_mine:
             r["z"] = None if z is None else (z if r["stm"] == "w" else 1.0 - z)
             r["result"] = res
             r["game"] = gid
         rows.extend(mine)
+        if fast is not None:
+            fast.extend(fast_mine)
     return seen
 
 
@@ -274,7 +288,9 @@ if __name__ == "__main__":
     with_noise(tree, rng)
     print(f"target {TARGET:,} positions at {VISITS} visits a move, "
           f"{100*OPENING_FRAC:.0f}% from the opening, root noise {ROOT_NOISE:g} "
-          f"(alpha {NOISE_ALPHA:g} over the legal moves)\n", flush=True)
+          f"(alpha {NOISE_ALPHA:g} over the legal moves)"
+          + (f"; {100 * FULL_FRAC:.0f}% of moves in full, the rest at {FAST_VISITS} visits"
+             if FULL_FRAC < 1.0 else "") + "\n", flush=True)
 
     t0 = time.time()
     games = 0
@@ -282,13 +298,18 @@ if __name__ == "__main__":
     try:
         while have < TARGET:
             rows = [] if TARGETS else None
-            fens = play(model, device, rng, tree, rows)
+            fast = [] if TARGETS and FULL_FRAC < 1.0 else None
+            fens = play(model, device, rng, tree, rows, fast)
             for fen in fens:
                 f.write(fen + "\n")
             if rows:
                 with open(TARGETS_OUT, "a", encoding="utf-8") as tf:
                     for r in rows:
                         tf.write(json.dumps(r) + chr(10))
+            if fast:
+                with open(FAST_OUT, "a", encoding="utf-8") as ff:
+                    for r in fast:
+                        ff.write(json.dumps(r) + chr(10))
             have += len(fens)
             games += 1
             # Follow the trainer, so the positions come from the current model. Checked between

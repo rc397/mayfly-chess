@@ -348,6 +348,7 @@ def work(widx, conns, cfg, soft_stop, made, log):
     os.makedirs(cfg["out"], exist_ok=True)
     pos_path = os.path.join(cfg["out"], f"positions_w{widx:03d}.txt")
     tgt_path = os.path.join(cfg["out"], f"targets_w{widx:03d}.jsonl")
+    fast_path = os.path.join(cfg["out"], f"fast_w{widx:03d}.jsonl")      # rows from cheap moves
     lock = threading.Lock()
     # Every tree is built and warmed here, on the main thread, after its sealed search is applied. A search thread
     # must never import (mcts._warm). v5's sealed search turns on lcb, whose scipy import would otherwise happen
@@ -367,10 +368,14 @@ def work(widx, conns, cfg, soft_stop, made, log):
             sp.with_noise(tree, rng)
             while time.time() < soft_stop.value:
                 rows = [] if sp.TARGETS else None
-                fens = sp.play(None, "cpu", rng, tree, rows)
+                fast = [] if sp.TARGETS and sp.FULL_FRAC < 1.0 else None
+                fens = sp.play(None, "cpu", rng, tree, rows, fast)
                 with lock:
                     with open(pos_path, "a", encoding="utf-8") as f:
                         f.write("".join(x + "\n" for x in fens))
+                    if fast:
+                        with open(fast_path, "a", encoding="utf-8") as f:
+                            f.write("".join(json.dumps(r) + "\n" for r in fast))
                     if rows:
                         with open(tgt_path, "a", encoding="utf-8") as f:
                             f.write("".join(json.dumps(r) + "\n" for r in rows))
@@ -434,7 +439,8 @@ def run(seconds=None, out=None):
     if E("SP_STARTS") and os.path.exists(E("SP_STARTS")):
         starts = [l.strip() for l in open(E("SP_STARTS"), encoding="utf-8") if l.strip()]
     env = {k: E(k) for k in ("VISITS", "TEMP_PLIES", "OPENING_FRAC", "MAX_PLIES", "BATCH", "ROOT_NOISE",
-                             "NOISE_ALPHA", "TARGETS", "MCTS_NATIVE", "TB") if E(k) is not None}
+                             "NOISE_ALPHA", "TARGETS", "MCTS_NATIVE", "TB", "FULL_FRAC", "FAST_VISITS")
+           if E(k) is not None}
     env.setdefault("VISITS", "1600")
     if T > 1:
         env["MCTS_NATIVE"] = "0"          # the compiled walk is not safe for two trees at once in one process

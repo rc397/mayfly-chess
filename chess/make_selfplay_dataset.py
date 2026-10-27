@@ -7,7 +7,8 @@ torch), versions.json with the sealed search, and corpus_starts.txt, STARTS posi
 selfplay.random_corpus_board draws them. --upload then creates or versions the dataset.
 
   python chess/make_selfplay_dataset.py [--upload]
-  env: KAGGLE_USER=<name>  SP_DATASET_DIR=<data>/kaggle/sp_dataset  SP_CKPT=<data>/versions/mayfly_v5.pt
+  env: KAGGLE_USER=<name>  SP_DATASET_DIR=<data>/kaggle/sp_dataset  SP_VERSION=mayfly_v6.pt
+       SP_CKPT (default: that version in <data>/versions)
        STARTS=30000
 """
 import json
@@ -24,8 +25,9 @@ import paths  # noqa: E402
 
 E = os.environ.get
 OUT = E("SP_DATASET_DIR", paths.under("kaggle", "sp_dataset"))
-CKPT = E("SP_CKPT", os.path.join(paths.VERSIONS, "mayfly_v5.pt"))
 VDIR = E("VERSION_DIR", paths.under("versions"))
+VERSION = E("SP_VERSION", "mayfly_v6.pt")      # the version that plays; written to sp_version.json
+CKPT = E("SP_CKPT", os.path.join(VDIR, VERSION))
 CODE = ["selfplay_remote.py", "selfplay.py", "mcts.py", "chess_net.py", "chessnet_jax.py", "encode.py", "moves.py",
         "lc0_moves.py", "book.py", "kaggle_selfplay.py", "tpu_bench.py", "paths.py"]
 NATIVE = ["movegen.c", "walk.c", "pick.c"]
@@ -40,7 +42,14 @@ def build():
     for f in NATIVE:
         shutil.copy2(os.path.join(HERE, "native", f), OUT)
     shutil.copy2(os.path.join(VDIR, "versions.json"), OUT)
-    npz = os.path.join(OUT, "mayfly_v5.npz")
+    npz_name = os.path.splitext(VERSION)[0] + ".npz"
+    # move other versions' weights out of the folder, or every upload would carry them
+    old = os.path.normpath(OUT) + "_old_weights"
+    for f in os.listdir(OUT):
+        if f.endswith(".npz") and f != npz_name:
+            os.makedirs(old, exist_ok=True)
+            os.replace(os.path.join(OUT, f), os.path.join(old, f))
+    npz = os.path.join(OUT, npz_name)
     if not os.path.exists(npz) or os.path.getmtime(npz) < os.path.getmtime(CKPT):
         from selfplay_remote import save_npz
         save_npz(CKPT, npz)
@@ -57,6 +66,8 @@ def build():
             raise SystemExit(f"only {len(fens)} distinct corpus starts: are the shards at {sp.SHARDS}?")
         with open(starts, "w", encoding="utf-8") as fh:
             fh.write("".join(f + "\n" for f in sorted(fens)))
+    with open(os.path.join(OUT, "sp_version.json"), "w", encoding="utf-8") as fh:
+        json.dump({"version": VERSION, "npz": npz_name}, fh)
     meta = {"title": "mayfly-selfplay", "id": SLUG, "licenses": [{"name": "other"}]}
     with open(os.path.join(OUT, "dataset-metadata.json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, indent=1)
