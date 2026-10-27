@@ -81,12 +81,29 @@ table {{ border-collapse:collapse; width:100%; }}
 th, td {{ padding:8px 10px; text-align:left; border-bottom:1px solid var(--line); }}
 th {{ color:var(--soft); font-weight:500; font-size:.85rem; }}
 .n {{ text-align:right; font-variant-numeric:tabular-nums; }} a {{ color:inherit; }}
+h2 {{ font-size:1.1rem; margin:36px 0 8px; }} ol {{ margin:0 0 12px; padding-left:1.4em; }} li {{ margin:6px 0; }}
 </style></head><body><main>
 <h1>MayFly Contributors</h1>
-<p class=soft>{len(rows)} contributors, {total_g:,} games, {total_p:,} positions, {total_l:,} deep labels. <a href="{NOTEBOOK}">Join</a></p>
+<p class=soft>{len(rows)} contributors, {total_g:,} games, {total_p:,} positions, {total_l:,} deep labels.
+<a href="#join">Join</a></p>
 <table><tr><th>#</th><th>Contributor</th><th class=n>Positions</th><th class=n>Games</th><th class=n>Deep labels</th></tr>{body}</table>
 <p class=soft style="margin-top:16px">Updated {time.strftime('%d %b %Y')}.
 <a href="topcontributors.txt">topcontributors.txt</a></p>
+
+<h2 id="join">How to join the cause</h2>
+<p class=soft>About two minutes, free, and nothing runs on your own computer: you lend MayFly Kaggle's cloud computers.</p>
+<ol>
+<li>Make a free account at <a href="https://www.kaggle.com">kaggle.com</a> ("Sign in with Google" is quickest).</li>
+<li>Optional, but it makes your help about 100 times bigger: click your picture, then Settings, then Phone
+verification. That unlocks Kaggle's free TPU.</li>
+<li>Open the <a href="{NOTEBOOK}">MayFly notebook</a> and click <b>Copy &amp; Edit</b>.</li>
+<li>If you verified your phone: under Session options, set Accelerator to <b>TPU VM v5e-8</b>. If not, leave it.</li>
+<li>Click <b>Save Version</b>, keep "Save &amp; Run All (Commit)", and click <b>Save</b>.</li>
+<li>Click <b>Share</b> and set it to <b>Public</b>, so we can collect what your run made.</li>
+</ol>
+<p class=soft>That's it. It runs for 8 to 11 hours and you can close the tab. With a TPU it plays MayFly against itself;
+without one it analyses hard positions deeply with Stockfish. Kaggle gives fresh free hours every week, so open your
+copy under Your Work and press Save Version again. Your Kaggle name shows up here once your run has been checked.</p>
 </main></body></html>
 """
 
