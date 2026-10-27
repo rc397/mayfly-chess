@@ -1,7 +1,7 @@
-MayFly v6: top contributors (self-play and deep labels donated)
+MayFly v6 top contributors (self-play and deep labels donated)
 updated 2026-10-27
 
-No contributions yet. Be the first: https://www.kaggle.com/code/rc7530/mayfly-selfplay-volunteer
+No contributions yet. Be the first at https://www.kaggle.com/code/rc7530/mayfly-selfplay-volunteer
 
-Join: https://www.kaggle.com/code/rc7530/mayfly-selfplay-volunteer
-Code: https://github.com/rc397/mayfly-chess
+Join at https://www.kaggle.com/code/rc7530/mayfly-selfplay-volunteer
+Code at https://github.com/rc397/mayfly-chess
