@@ -29,7 +29,7 @@ VDIR = E("VERSION_DIR", paths.under("versions"))
 VERSION = E("SP_VERSION", "mayfly_v6.pt")      # the version that plays; written to sp_version.json
 CKPT = E("SP_CKPT", os.path.join(VDIR, VERSION))
 CODE = ["selfplay_remote.py", "selfplay.py", "mcts.py", "chess_net.py", "chessnet_jax.py", "encode.py", "moves.py",
-        "lc0_moves.py", "book.py", "kaggle_selfplay.py", "tpu_bench.py", "paths.py"]
+        "lc0_moves.py", "book.py", "kaggle_selfplay.py", "tpu_bench.py", "paths.py", "mcts_cpp.py"]
 NATIVE = ["movegen.c", "walk.c", "pick.c"]
 SLUG = f"{E('KAGGLE_USER', '')}/mayfly-selfplay"
 
