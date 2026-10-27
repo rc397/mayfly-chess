@@ -358,6 +358,7 @@ def work(widx, conns, cfg, soft_stop, made, log):
         tree = RemoteMCTS(c, sp.BATCH)
         if sealed:
             tree.apply(sealed)
+        tree.engine = "python"       # the network is on the server, so there's no C++ tree here
         tree._warm()
         trees.append(tree)
 

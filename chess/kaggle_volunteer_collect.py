@@ -1,9 +1,10 @@
 """Collect volunteers' runs of the public Kaggle notebook and check them before they're used.
 
 Looks at every public copy of rc7530/mayfly-selfplay-volunteer (or any notebook using the public dataset), downloads
-each finished run once, and keeps it only if it passes the checks below. Kept runs go to VOL_OUT/<user>/<run>,
-rejected ones to VOL_OUT/_rejected with the reason. Labelling runs are turned into deep-label rows (dh shards tagged
-"vl").
+each finished version of it once, and keeps it only if it passes the checks below. Every version is fetched, not just
+the newest, since volunteers often press Save Version several times on one copy. Kept runs go to
+VOL_OUT/<user>/<run>, rejected ones to VOL_OUT/_rejected with the reason. Labelling runs are turned into deep-label
+rows (dh shards tagged "vl").
 """
 import gzip
 import json
@@ -29,6 +30,8 @@ LEDGER = os.path.join(VOL_OUT, "ledger.json")
 VERSION = E("VOL_VERSION", "mayfly_v6.pt")
 MIN_VISITS = int(E("VOL_MIN_VISITS", 800))
 SAMPLE, MAX_BAD = 300, 0.02
+MAX_VERSIONS = int(E("VOL_MAX_VERSIONS", 40))     # versions looked at per copy
+FILES = ["summary.json", "targets.jsonl.gz", "positions.txt.gz", "fast.jsonl.gz", "results.jsonl", "chunk.txt"]
 
 
 def kaggle(*args, timeout=1800):
@@ -37,6 +40,34 @@ def kaggle(*args, timeout=1800):
     r = subprocess.run([sys.executable, "-m", "kaggle", *args], capture_output=True, text=True, encoding="utf-8",
                        errors="replace", env=env, timeout=timeout)
     return r.returncode, (r.stdout or "") + (r.stderr or "")
+
+
+def client():
+    """A Kaggle API client. The command line tool can only fetch a notebook's newest output, the API any version's."""
+    os.environ["KAGGLE_API_TOKEN"] = os.path.expanduser(os.path.join("~", ".kaggle", "access_token"))
+    from kaggle.api.kaggle_api_extended import KaggleApi
+    api = KaggleApi()
+    api.authenticate()
+    return api.build_kaggle_client()
+
+
+def fetch_version(k, ref, v, dest):
+    """Download version v's output files into dest. False if it has no summary yet (still running, or no such version)."""
+    from kagglesdk.kernels.types.kernels_api_service import ApiDownloadKernelOutputRequest
+    owner, slug = ref.split("/")
+    os.makedirs(dest, exist_ok=True)
+    for name in FILES:
+        req = ApiDownloadKernelOutputRequest()
+        req.owner_slug, req.kernel_slug, req.file_path, req.version_number = owner, slug, name, v
+        try:
+            r = k.kernels.kernels_api_client.download_kernel_output(req)
+        except Exception:
+            if name == "summary.json":
+                return False
+            continue
+        with open(os.path.join(dest, name), "wb") as fh:
+            fh.write(r.content)
+    return True
 
 
 def copies():
@@ -146,38 +177,44 @@ def check(d):
 def main():
     os.makedirs(VOL_OUT, exist_ok=True)
     seen = json.load(open(LEDGER)) if os.path.exists(LEDGER) else {}
-    for ref in copies():
-        rc, out = kaggle("kernels", "status", ref)
-        if "complete" not in out.lower():
-            continue
-        tmp = os.path.join(VOL_OUT, "_incoming", ref.replace("/", "__"))
-        shutil.rmtree(tmp, ignore_errors=True)
-        os.makedirs(tmp)
-        kaggle("kernels", "output", ref, "-p", tmp, timeout=3600)
-        try:
-            run = json.load(open(os.path.join(tmp, "summary.json"))).get("run", "unknown")
-        except (OSError, ValueError):
-            run = "unknown"
-        key = f"{ref}:{run}"
-        if key in seen:
-            shutil.rmtree(tmp, ignore_errors=True)
-            continue
-        why = check(tmp)
-        user = ref.split("/")[0]
-        dest = os.path.join(VOL_OUT, user, run) if why is None else os.path.join(VOL_OUT, "_rejected", user, run)
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        shutil.rmtree(dest, ignore_errors=True)
-        shutil.move(tmp, dest)
-        if why is None and os.path.exists(os.path.join(dest, "chunk.txt")):
-            n_pos, n_rows = ingest_labels(dest)
-            sp = os.path.join(dest, "summary.json")
-            summ = json.load(open(sp))
-            summ["labelled"] = n_pos      # the leaderboard reads this
-            json.dump(summ, open(sp, "w"), indent=1)
-            print(f"  {n_pos:,} positions labelled, {n_rows:,} rows written", flush=True)
-        seen[key] = {"at": time.strftime("%Y-%m-%d %H:%M"), "kept": why is None, "why": why}
-        print(f"{key}: {'kept' if why is None else 'REJECTED: ' + why}", flush=True)
+    with client() as k:
+        for ref in copies():
+            for v in range(1, MAX_VERSIONS + 1):
+                if f"{ref}/{v}" in seen:
+                    continue
+                tmp = os.path.join(VOL_OUT, "_incoming", f"{ref.replace('/', '__')}_v{v}")
+                shutil.rmtree(tmp, ignore_errors=True)
+                if fetch_version(k, ref, v, tmp):
+                    take(ref, v, tmp, seen)
+                else:
+                    shutil.rmtree(tmp, ignore_errors=True)
     json.dump(seen, open(LEDGER, "w"), indent=1)
+
+
+def take(ref, v, tmp, seen):
+    """Check one downloaded version, file it as kept or rejected, and turn kept labels into rows."""
+    try:
+        run = json.load(open(os.path.join(tmp, "summary.json"))).get("run", f"v{v}")
+    except (OSError, ValueError):
+        run = f"v{v}"
+    run = f"{run}_v{v}"            # unique even if two versions started in the same minute
+    key = f"{ref}/{v}"
+    why = check(tmp)
+    user = ref.split("/")[0]
+    dest = os.path.join(VOL_OUT, user, run) if why is None else os.path.join(VOL_OUT, "_rejected", user, run)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    shutil.rmtree(dest, ignore_errors=True)
+    shutil.move(tmp, dest)
+    if why is None and os.path.exists(os.path.join(dest, "chunk.txt")):
+        n_pos, n_rows = ingest_labels(dest)
+        sp = os.path.join(dest, "summary.json")
+        summ = json.load(open(sp))
+        summ["labelled"] = n_pos      # the leaderboard reads this
+        json.dump(summ, open(sp, "w"), indent=1)
+        print(f"  {n_pos:,} positions labelled, {n_rows:,} rows written", flush=True)
+    seen[key] = {"at": time.strftime("%Y-%m-%d %H:%M"), "kept": why is None, "why": why}
+    print(f"{key}: {'kept' if why is None else 'REJECTED: ' + why}", flush=True)
+    json.dump(seen, open(LEDGER, "w"), indent=1)      # saved after each one, so a crash loses nothing
 
 
 if __name__ == "__main__":
