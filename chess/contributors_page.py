@@ -20,6 +20,8 @@ OUT = sys.argv[1] if len(sys.argv) > 1 else E("PAGE_OUT", paths.under("selfplay"
 NOTEBOOK = "https://www.kaggle.com/code/rc7530/mayfly-selfplay-volunteer"
 REPO = "https://github.com/rc397/mayfly-chess"
 VERSION = E("VOL_VERSION_NAME", "v6")
+# folders that aren't a Kaggle user: MayFly's own machines show as one honest row
+NAMES = {"mayfly-own": "MayFly (own machines)"}
 
 
 def gather():
@@ -30,6 +32,7 @@ def gather():
         user = os.path.basename(os.path.dirname(os.path.dirname(path)))
         if user.startswith("_"):
             continue                                   # skip _rejected and _incoming
+        user = NAMES.get(user, user)
         try:
             s = json.load(open(path))
         except (OSError, ValueError):
