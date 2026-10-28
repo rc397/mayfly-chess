@@ -28,6 +28,10 @@ the [volunteer notebook](https://www.kaggle.com/code/rc7530/mayfly-selfplay-volu
 Version. With a TPU (Settings > Accelerator) it plays MayFly self-play; without one it labels hard positions with
 Stockfish. Everyone who helps is on the [contributors page](https://rc397.github.io/mayfly-chess/).
 
+On Windows you can also lend your own graphics card. Download `MayFlyVolunteer.exe` from the
+[latest release](https://github.com/rc397/mayfly-chess/releases/latest), open it, pick a name and press Run. It works on
+NVIDIA, AMD and Intel graphics, and its source is in [chess/volunteer](chess/volunteer).
+
 ## Results
 
 These are measured results for v6, the latest released version (24 October 2026), and for the CUDA backend. The
