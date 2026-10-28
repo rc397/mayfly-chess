@@ -1,9 +1,9 @@
 {
- "updated": "2026-10-28 16:46",
+ "updated": "2026-10-29 07:15",
  "version": "v6",
  "contributors": [
   {
-   "name": "MayFly (own machines)",
+   "name": "mayfly-own",
    "positions": 5071389,
    "games": 17149,
    "labels": 448002,
@@ -45,6 +45,22 @@
      1076,
      13,
      0
+    ]
+   }
+  },
+  {
+   "name": "evemz2026",
+   "positions": 1539035,
+   "games": 11660,
+   "labels": 221,
+   "runs": 5,
+   "first": "2026-10-29",
+   "last": "2026-10-29",
+   "days": {
+    "2026-10-29": [
+     1539035,
+     11660,
+     221
     ]
    }
   }
