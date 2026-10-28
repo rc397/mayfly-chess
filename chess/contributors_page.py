@@ -23,7 +23,9 @@ VERSION = E("VOL_VERSION_NAME", "v6")
 
 
 def gather():
-    people = defaultdict(lambda: {"positions": 0, "games": 0, "labels": 0, "runs": 0, "first": None, "last": None})
+    """Everyone's totals, plus their totals for each day a run of theirs was collected (the page's time periods)."""
+    people = defaultdict(lambda: {"positions": 0, "games": 0, "labels": 0, "runs": 0, "first": None, "last": None,
+                                  "days": defaultdict(lambda: [0, 0, 0])})
     for path in glob.glob(os.path.join(VOL_OUT, "*", "*", "summary.json")):
         user = os.path.basename(os.path.dirname(os.path.dirname(path)))
         if user.startswith("_"):
@@ -35,15 +37,21 @@ def gather():
         day = time.strftime("%Y-%m-%d", time.localtime(os.path.getmtime(path)))
         p = people[user]
         if s.get("kind") == "label":
-            p["labels"] += int(s.get("labelled", 0))
+            n = int(s.get("labelled", 0))
+            p["labels"] += n
+            p["days"][day][2] += n
         else:
-            p["positions"] += int(s.get("positions_written", s.get("positions", 0)))
-            p["games"] += int(s.get("games", 0))
+            pos, games = int(s.get("positions_written", s.get("positions", 0))), int(s.get("games", 0))
+            p["positions"] += pos
+            p["games"] += games
+            p["days"][day][0] += pos
+            p["days"][day][1] += games
         p["runs"] += 1
         p["first"] = min(p["first"] or day, day)
         p["last"] = max(p["last"] or day, day)
     # a deep label takes a CPU far longer than a self-play position takes a TPU, so weight it by 100
-    return sorted(({"name": k, **v} for k, v in people.items()), key=lambda r: -(r["positions"] + 100 * r["labels"]))
+    rows = [{"name": k, **v, "days": dict(sorted(v["days"].items()))} for k, v in people.items()]
+    return sorted(rows, key=lambda r: -(r["positions"] + 100 * r["labels"]))
 
 
 def text(rows):
@@ -57,6 +65,45 @@ def text(rows):
     return "\n".join(lines) + "\n"
 
 
+# The tabs: totals for today, this week (from Monday), this month, this half year, this year or all time, by the
+# visitor's own calendar, from the days embedded in the page. Without scripts the all-time table stays.
+PERIODS_JS = """
+(function () {
+  var data = JSON.parse(document.getElementById('data').textContent);
+  var now = new Date(), y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
+  function iso(t) { return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'); }
+  var start = { today: iso(now), week: iso(new Date(y, m, d - (now.getDay() + 6) % 7)), month: iso(new Date(y, m, 1)),
+                half: iso(new Date(y, m < 6 ? 0 : 6, 1)), year: iso(new Date(y, 0, 1)), all: '' };
+  var words = { today: 'today', week: 'this week', month: 'this month', half: 'this half year', year: 'this year', all: '' };
+  function fmt(n) { return n.toLocaleString('en-US'); }
+  function esc(s) { return s.replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function show(p) {
+    var rows = [];
+    for (var name in data) {
+      var t = [0, 0, 0];
+      for (var day in data[name]) if (day >= start[p]) for (var i = 0; i < 3; i++) t[i] += data[name][day][i];
+      if (t[0] || t[1] || t[2]) rows.push([name, t]);
+    }
+    rows.sort(function (a, b) { return (b[1][0] + 100 * b[1][2]) - (a[1][0] + 100 * a[1][2]); });
+    var tot = [0, 0, 0];
+    rows.forEach(function (r) { for (var i = 0; i < 3; i++) tot[i] += r[1][i]; });
+    document.getElementById('rows').innerHTML = rows.length ? rows.map(function (r, i) {
+      return '<tr><td>' + (i + 1) + '</td><td>' + esc(r[0]) + '</td><td class=n>' + fmt(r[1][0]) + '</td><td class=n>' +
+             fmt(r[1][1]) + '</td><td class=n>' + fmt(r[1][2]) + '</td></tr>';
+    }).join('') : '<tr><td colspan=5>No contributions ' + (words[p] || 'yet') + '.</td></tr>';
+    document.getElementById('totals').textContent = rows.length + ' contributor' + (rows.length === 1 ? '' : 's') + ', ' +
+      fmt(tot[1]) + ' games, ' + fmt(tot[0]) + ' positions, ' + fmt(tot[2]) + ' deep labels' + (words[p] ? ' ' + words[p] : '') + '.';
+    document.querySelectorAll('#tabs button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.p === p)); });
+  }
+  document.querySelectorAll('#tabs button').forEach(function (b) {
+    b.onclick = function () { history.replaceState(null, '', '#' + b.dataset.p); show(b.dataset.p); };
+  });
+  var h = location.hash.slice(1);
+  show(start.hasOwnProperty(h) ? h : 'all');
+})();
+"""
+
+
 def page(rows):
     total_p = sum(r["positions"] for r in rows)
     total_g = sum(r["games"] for r in rows)
@@ -65,6 +112,8 @@ def page(rows):
         f"<tr><td>{i}</td><td>{html.escape(r['name'])}</td><td class=n>{r['positions']:,}</td>"
         f"<td class=n>{r['games']:,}</td><td class=n>{r['labels']:,}</td></tr>" for i, r in enumerate(rows, 1)) or (
         "<tr><td colspan=5>No contributions yet.</td></tr>")
+    # each contributor's totals by day, for the tabs; "</" escaped so a name can never end the script block
+    days_json = json.dumps({r["name"]: r["days"] for r in rows}, separators=(",", ":")).replace("</", "<\\/")
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MayFly Contributors</title>
@@ -83,11 +132,19 @@ th {{ color:var(--soft); font-weight:500; font-size:.85rem; }}
 .n {{ text-align:right; font-variant-numeric:tabular-nums; }} a {{ color:inherit; }}
 h2 {{ font-size:1.1rem; margin:36px 0 8px; }} h3 {{ font-size:1rem; margin:24px 0 6px; }}
 ol {{ margin:0 0 12px; padding-left:1.4em; }} li {{ margin:6px 0; }}
+.tabs {{ display:flex; flex-wrap:wrap; gap:4px 16px; margin:0 0 12px; }}
+.tabs button {{ font:inherit; font-size:.9rem; color:var(--soft); background:none; border:0; border-bottom:1px solid transparent;
+  padding:2px 0; cursor:pointer; }}
+.tabs button[aria-pressed=true] {{ color:var(--ink); border-bottom-color:var(--ink); }}
+.tabs button:focus-visible {{ outline:2px solid var(--soft); outline-offset:2px; }}
 </style></head><body><main>
 <h1>MayFly Contributors</h1>
-<p class=soft>{len(rows)} contributors, {total_g:,} games, {total_p:,} positions, {total_l:,} deep labels.
+<p class=soft><span id=totals>{len(rows)} contributors, {total_g:,} games, {total_p:,} positions, {total_l:,} deep labels.</span>
 <a href="#join">Join</a></p>
-<table><tr><th>#</th><th>Contributor</th><th class=n>Positions</th><th class=n>Games</th><th class=n>Deep labels</th></tr>{body}</table>
+<p class=tabs id=tabs><button data-p=today>Today</button><button data-p=week>This week</button><button data-p=month>This month</button><button data-p=half>This half year</button><button data-p=year>This year</button><button data-p=all aria-pressed=true>All time</button></p>
+<table><tr><th>#</th><th>Contributor</th><th class=n>Positions</th><th class=n>Games</th><th class=n>Deep labels</th></tr><tbody id=rows>{body}</tbody></table>
+<script type="application/json" id=data>{days_json}</script>
+<script>{PERIODS_JS}</script>
 <p class=soft style="margin-top:16px">Updated {time.strftime('%d %b %Y')}.
 <a href="topcontributors.txt">topcontributors.txt</a></p>
 
