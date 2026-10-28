@@ -6,7 +6,7 @@ self-play. selfplay.py runs one game at a time with the network in its own proce
   servers   one process owns the accelerator and runs the network on big padded batches made of many searches'
             requests. "jax" drives every TPU chip from one process with the batch sharded across them
             (chessnet_jax.py), "torch" is one process per CUDA card (float16 on a card without bfloat16),
-            and "cpu" is for tests.
+            "onnx" runs volunteer/export_net.py's file on DirectML (the volunteer app) and "cpu" is for tests.
   workers   CPU processes, one game each by default. SP_THREADS above 1 runs that many games a process on
             threads and switches the compiled tree walk off (MCTS_NATIVE=0), since two trees searching at once
             in one process stall it. A worker's tree is selfplay.py's, with the version's network and sealed
@@ -157,10 +157,13 @@ def serve(backend, device, conns, weights, ready, stop, evals, buckets, log):
 
 
 def _serve(backend, device, conns, weights, ready, stop, evals, buckets, log):
-    cfg, params = load_weights(**weights)
     merger = Merger(buckets)
     cap = merger.buckets[-1] - 64             # leave room for one more request of up to 64 rows
     t0 = time.time()
+    if backend == "onnx":
+        _serve_onnx(device, conns, weights["onnx"], ready, evals, merger, cap, log, t0)
+        return
+    cfg, params = load_weights(**weights)
     if backend == "jax":
         import jax
         from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
@@ -226,6 +229,39 @@ def _serve(backend, device, conns, weights, ready, stop, evals, buckets, log):
             merger.reply(spans, pg.cpu().numpy(), (qg * 2.0 - 1.0).cpu().numpy(), val.cpu().numpy())
             with evals.get_lock():
                 evals.value += n
+
+
+def _serve_onnx(device, conns, path, ready, evals, merger, cap, log, t0):
+    """The volunteer app's server. volunteer/export_net.py's graph runs in ONNX Runtime, on DirectML (any Windows
+    graphics card, device being its DXGI number) or on the CPU. The graph ends where the torch server's code does,
+    so its three outputs are the reply as they come."""
+    import onnxruntime as ort
+    prov = [("DmlExecutionProvider", {"device_id": int(device)}), "CPUExecutionProvider"] \
+        if device != "cpu" and "DmlExecutionProvider" in ort.get_available_providers() else ["CPUExecutionProvider"]
+    opts = ort.SessionOptions()
+    opts.log_severity_level = 3
+    sess = ort.InferenceSession(path, opts, providers=prov)
+    kinds = {i.name: i.type for i in sess.get_inputs()}
+    cast_dt = np.float16 if kinds.get("cast") == "tensor(float16)" else np.float32
+    for b in merger.buckets:                 # one pass at every bucket before the workers start
+        sess.run(None, {"ids": np.zeros((b, 64), np.int64), "cast": np.zeros((b, 4), cast_dt),
+                        "hm": np.zeros(b, np.int64), "ep": np.zeros(b, np.int64),
+                        "I": np.zeros((b, W_FIX), np.int64), "Ip": np.zeros((b, W_FIX), np.int64),
+                        "M": np.ones((b, W_FIX), bool)})
+    log.put(f"server onnx {sess.get_providers()[0]} device {device}: buckets {merger.buckets}, "
+            f"ready in {time.time() - t0:.0f}s")
+    ready.set()
+    while conns:
+        got = merger.take(conns, 0.05, cap)
+        if not got:
+            continue
+        (ids, cast, hm, ep, I, Ip, M), spans, n = merger.stack(got)
+        pg, qg, val = sess.run(None, {"ids": ids.astype(np.int64), "cast": cast.astype(cast_dt),
+                                      "hm": hm.astype(np.int64), "ep": ep.astype(np.int64),
+                                      "I": I.astype(np.int64), "Ip": Ip.astype(np.int64), "M": M})
+        merger.reply(spans, pg, qg, val)
+        with evals.get_lock():
+            evals.value += n
 
 
 def _torch_net(cfg, params):
@@ -326,6 +362,10 @@ def work(widx, conns, cfg, soft_stop, made, log):
     for k, v in cfg["env"].items():
         os.environ[k] = str(v)
     os.environ.setdefault("OMP_NUM_THREADS", "1")
+    # the volunteer app has no PyTorch, so its workers import the search code over volunteer/torch_stub.py
+    if cfg.get("torch_stub"):
+        from volunteer.torch_stub import install
+        install(force=cfg["torch_stub"] == "force")
     try:
         import torch
         torch.set_num_threads(1)
@@ -432,9 +472,10 @@ def run(seconds=None, out=None):
     out = out or E("SP_OUT", os.path.join(os.getcwd(), "sp_out"))
     P = int(E("SP_WORKERS", max(1, (os.cpu_count() or 2) - 2)))
     T = int(E("SP_THREADS", 1))
-    weights = {"npz": E("SP_NPZ")} if E("SP_NPZ") else {"ckpt": E("SP_CKPT", paths.under("versions", "mayfly_v5.pt"))}
+    weights = ({"onnx": E("SP_ONNX")} if backend == "onnx" else {"npz": E("SP_NPZ")} if E("SP_NPZ")
+               else {"ckpt": E("SP_CKPT", paths.under("versions", "mayfly_v5.pt"))})
     default_buckets = {"jax": "512,1024,2048,4096,8192", "torch": "64,128,256,512,1024",
-                       "cpu": "16,32,64,128,256"}[backend]
+                       "onnx": "32,64,128,256,512", "cpu": "16,32,64,128,256"}[backend]
     buckets = [int(x) for x in E("SP_BUCKETS", default_buckets).split(",")]
     starts = []
     if E("SP_STARTS") and os.path.exists(E("SP_STARTS")):
@@ -446,7 +487,7 @@ def run(seconds=None, out=None):
     if T > 1:
         env["MCTS_NATIVE"] = "0"          # the compiled walk is not safe for two trees at once in one process
     cfg = {"env": env, "version": E("VERSION", "mayfly_v5.pt"), "vdir": E("VERSION_DIR", paths.under("versions")),
-           "out": out, "seed": int(E("SP_SEED", 0)), "starts": starts}
+           "out": out, "seed": int(E("SP_SEED", 0)), "starts": starts, "torch_stub": E("SP_TORCH_STUB")}
     ctx = mp.get_context("spawn")
     log = ctx.Queue()
     ready_ev, stop_ev = [], ctx.Event()
@@ -463,6 +504,8 @@ def run(seconds=None, out=None):
     if backend == "torch":
         import torch
         devices = [f"cuda:{i}" for i in range(torch.cuda.device_count())]
+    elif backend == "onnx":
+        devices = [E("SP_DEVICE", "0")]       # the graphics card's DXGI number, or "cpu"
     else:
         devices = [backend]
     split = [server_ends[i::len(devices)] for i in range(len(devices))]

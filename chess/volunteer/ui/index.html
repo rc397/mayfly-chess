@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MayFly Volunteer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap">
+<style>
+  :root { --bg:#ffffff; --ink:#1d2320; --soft:#66706a; --line:#dfe3dd; --field:#f6f7f5; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#141816; --ink:#e7ece8; --soft:#9aa69f; --line:#2c332f; --field:#1b201d; } }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:28px 22px 18px; background:var(--bg); color:var(--ink);
+         font:15px/1.6 Inter, "Segoe UI", system-ui, sans-serif; }   /* Inter, the font Stockfish's site uses */
+  main { max-width:520px; margin:0 auto; }
+  h1 { font-size:1.5rem; margin:0 0 6px; }
+  h2 { font-size:1.1rem; margin:30px 0 8px; }
+  .soft { color:var(--soft); margin:0 0 18px; }
+  button, input, select { font:inherit; color:var(--ink); }
+  .run { display:block; width:100%; padding:12px 0; margin:0 0 20px; background:var(--ink); color:var(--bg);
+         border:1px solid var(--ink); border-radius:6px; font-weight:600; cursor:pointer; letter-spacing:.02em; }
+  .run.on { background:transparent; color:var(--ink); }
+  .run:focus-visible, .lv:focus-visible, footer button:focus-visible { outline:2px solid var(--soft); outline-offset:2px; }
+  table { border-collapse:collapse; width:100%; }
+  th, td { padding:8px 10px; text-align:left; border-bottom:1px solid var(--line); }
+  th { color:var(--soft); font-weight:400; width:44%; }
+  .n { text-align:right; font-variant-numeric:tabular-nums; }
+  h1 { letter-spacing:-.01em; }
+  label { display:block; color:var(--soft); margin:14px 0 6px; }
+  input, select { width:100%; padding:8px 10px; background:var(--field); border:1px solid var(--line); border-radius:6px; }
+  input:focus, select:focus { outline:2px solid var(--soft); outline-offset:0; }
+  input:disabled, select:disabled, .lv:disabled { opacity:.5; cursor:default; }
+  .levels { display:flex; gap:8px; }
+  .lv { flex:1; padding:8px 0; background:var(--field); border:1px solid var(--line); border-radius:6px; cursor:pointer; }
+  .lv[aria-pressed="true"] { border-color:var(--ink); font-weight:600; }
+  .hint { color:var(--soft); margin:8px 0 0; font-size:.9rem; }
+  .note { color:var(--soft); font-size:.9rem; margin:24px 0 0; }
+  .note.err { color:var(--ink); font-weight:600; }
+  footer { max-width:520px; margin:26px auto 0; display:flex; justify-content:space-between; color:var(--soft); font-size:.85rem; }
+  footer button { background:none; border:0; padding:0; color:inherit; text-decoration:underline; cursor:pointer; font-size:inherit; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>MayFly Volunteer</h1>
+  <p class="soft">Your graphics card plays practice games that train MayFly. Stop any time.</p>
+
+  <button class="run" id="run" type="button">Run</button>
+
+  <table>
+    <tr><th>Status</th><td id="status">Not running</td></tr>
+    <tr><th>Games</th><td class="n" id="games">0</td></tr>
+    <tr><th>Positions</th><td class="n" id="positions">0</td></tr>
+    <tr><th>Running for</th><td class="n" id="time">0 min</td></tr>
+  </table>
+
+  <h2>Settings</h2>
+  <label for="name">Name on the leaderboard</label>
+  <input id="name" maxlength="24" autocomplete="off" spellcheck="false" placeholder="knightrider">
+  <label for="gpu">Graphics card</label>
+  <select id="gpu"></select>
+  <label id="lv-label">How much to give</label>
+  <div class="levels" role="group" aria-labelledby="lv-label">
+    <button class="lv" type="button" id="lv-light" data-level="light">Light</button>
+    <button class="lv" type="button" id="lv-half" data-level="half">Half</button>
+    <button class="lv" type="button" id="lv-full" data-level="full">Full</button>
+  </div>
+  <p class="hint" id="hint"></p>
+
+  <p class="note" id="note"></p>
+</main>
+<footer>
+  <button type="button" id="board">Leaderboard</button>
+  <span id="ver"></span>
+</footer>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const HINTS = {
+    light: "Leaves plenty of room for games and video.",
+    half: "A good balance while you use your computer.",
+    full: "Best when you are away. Your fans may get loud."
+  };
+  const WORDS = { starting: "Starting", "warming up": "Warming up", playing: "Playing" };
+  let state = null, err = "", nameTimer = null;
+
+  async function post(path, body) {
+    try {
+      const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "X-MayFly": "1" },
+                                    body: JSON.stringify(body || {}) });
+      const s = await r.json();
+      err = s.error || "";
+      render(s);
+    } catch (e) { err = "The app stopped answering. Close it and open it again."; render(state); }
+  }
+
+  function since(sec) {
+    const m = Math.floor(sec / 60), h = Math.floor(m / 60);
+    return h ? `${h} h ${m % 60} min` : `${m} min`;
+  }
+
+  function render(s) {
+    if (!s) return;
+    state = s;
+    const on = s.running;
+    const pct = Math.floor(100 * s.download_frac);
+    $("run").classList.toggle("on", on || s.downloading);
+    $("run").textContent = on ? "Stop" : s.downloading ? `Downloading MayFly ${pct}%` : "Run";
+    $("run").disabled = s.downloading;
+    const card = (s.gpus.find(g => g.index === s.gpu) || {}).name || "your graphics card";
+    $("status").textContent = on ? `${WORDS[s.status] || "Starting"} on ${card}` :
+      s.downloading ? `Getting the network, ${pct}%` : "Not running";
+    $("games").textContent = s.games.toLocaleString();
+    $("positions").textContent = s.positions.toLocaleString();
+    $("time").textContent = s.since ? since(Date.now() / 1000 - s.since) : "0 min";
+
+    if (document.activeElement !== $("name")) $("name").value = s.name;
+    const sel = $("gpu");
+    if (sel.options.length !== Math.max(1, s.gpus.length)) {
+      sel.innerHTML = "";
+      for (const g of s.gpus) sel.add(new Option(g.vram_gb >= 1 ? `${g.name} (${g.vram_gb} GB)` : g.name, g.index));
+      if (!s.gpus.length) sel.add(new Option("No graphics card found", -1));
+    }
+    sel.value = s.gpu;
+    for (const lv of ["light", "half", "full"]) $("lv-" + lv).setAttribute("aria-pressed", String(s.level === lv));
+    $("hint").textContent = HINTS[s.level];
+    for (const el of [$("name"), sel, ...document.querySelectorAll(".lv")]) el.disabled = on || s.downloading;
+
+    const problem = err || s.download_error;
+    $("note").classList.toggle("err", !!problem);
+    $("note").textContent = problem ||
+      (!s.model_ready ? "MayFly's network (about 290 MB) downloads the first time you press Run." :
+       "Games are saved on this computer. Sending them to the leaderboard starts soon.");
+    $("ver").textContent = `MayFly ${s.version}, app ${s.app_version}`;
+  }
+
+  $("run").onclick = () => post(state && state.running ? "/api/stop" : "/api/run");
+  $("name").oninput = () => { clearTimeout(nameTimer); nameTimer = setTimeout(() => post("/api/settings", { name: $("name").value }), 400); };
+  $("gpu").onchange = () => post("/api/settings", { gpu: Number($("gpu").value) });
+  for (const b of document.querySelectorAll(".lv")) b.onclick = () => post("/api/settings", { level: b.dataset.level });
+  $("board").onclick = () => post("/api/site");
+
+  async function poll() {
+    try { const r = await fetch("/api/state", { cache: "no-store" }); render(await r.json()); } catch (e) {}
+    setTimeout(poll, 1000);
+  }
+  poll();
+</script>
+</body>
+</html>
