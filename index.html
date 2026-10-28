@@ -16,12 +16,54 @@ th { color:var(--soft); font-weight:500; font-size:.85rem; }
 .n { text-align:right; font-variant-numeric:tabular-nums; } a { color:inherit; }
 h2 { font-size:1.1rem; margin:36px 0 8px; } h3 { font-size:1rem; margin:24px 0 6px; }
 ol { margin:0 0 12px; padding-left:1.4em; } li { margin:6px 0; }
+.tabs { display:flex; flex-wrap:wrap; gap:4px 16px; margin:0 0 12px; }
+.tabs button { font:inherit; font-size:.9rem; color:var(--soft); background:none; border:0; border-bottom:1px solid transparent;
+  padding:2px 0; cursor:pointer; }
+.tabs button[aria-pressed=true] { color:var(--ink); border-bottom-color:var(--ink); }
+.tabs button:focus-visible { outline:2px solid var(--soft); outline-offset:2px; }
 </style></head><body><main>
 <h1>MayFly Contributors</h1>
-<p class=soft>0 contributors, 0 games, 0 positions, 0 deep labels.
+<p class=soft><span id=totals>0 contributors, 0 games, 0 positions, 0 deep labels.</span>
 <a href="#join">Join</a></p>
-<table><tr><th>#</th><th>Contributor</th><th class=n>Positions</th><th class=n>Games</th><th class=n>Deep labels</th></tr><tr><td colspan=5>No contributions yet.</td></tr></table>
-<p class=soft style="margin-top:16px">Updated 27 Oct 2026.
+<p class=tabs id=tabs><button data-p=today>Today</button><button data-p=week>This week</button><button data-p=month>This month</button><button data-p=half>This half year</button><button data-p=year>This year</button><button data-p=all aria-pressed=true>All time</button></p>
+<table><tr><th>#</th><th>Contributor</th><th class=n>Positions</th><th class=n>Games</th><th class=n>Deep labels</th></tr><tbody id=rows><tr><td colspan=5>No contributions yet.</td></tr></tbody></table>
+<script type="application/json" id=data>{}</script>
+<script>
+(function () {
+  var data = JSON.parse(document.getElementById('data').textContent);
+  var now = new Date(), y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
+  function iso(t) { return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'); }
+  var start = { today: iso(now), week: iso(new Date(y, m, d - (now.getDay() + 6) % 7)), month: iso(new Date(y, m, 1)),
+                half: iso(new Date(y, m < 6 ? 0 : 6, 1)), year: iso(new Date(y, 0, 1)), all: '' };
+  var words = { today: 'today', week: 'this week', month: 'this month', half: 'this half year', year: 'this year', all: '' };
+  function fmt(n) { return n.toLocaleString('en-US'); }
+  function esc(s) { return s.replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function show(p) {
+    var rows = [];
+    for (var name in data) {
+      var t = [0, 0, 0];
+      for (var day in data[name]) if (day >= start[p]) for (var i = 0; i < 3; i++) t[i] += data[name][day][i];
+      if (t[0] || t[1] || t[2]) rows.push([name, t]);
+    }
+    rows.sort(function (a, b) { return (b[1][0] + 100 * b[1][2]) - (a[1][0] + 100 * a[1][2]); });
+    var tot = [0, 0, 0];
+    rows.forEach(function (r) { for (var i = 0; i < 3; i++) tot[i] += r[1][i]; });
+    document.getElementById('rows').innerHTML = rows.length ? rows.map(function (r, i) {
+      return '<tr><td>' + (i + 1) + '</td><td>' + esc(r[0]) + '</td><td class=n>' + fmt(r[1][0]) + '</td><td class=n>' +
+             fmt(r[1][1]) + '</td><td class=n>' + fmt(r[1][2]) + '</td></tr>';
+    }).join('') : '<tr><td colspan=5>No contributions ' + (words[p] || 'yet') + '.</td></tr>';
+    document.getElementById('totals').textContent = rows.length + ' contributor' + (rows.length === 1 ? '' : 's') + ', ' +
+      fmt(tot[1]) + ' games, ' + fmt(tot[0]) + ' positions, ' + fmt(tot[2]) + ' deep labels' + (words[p] ? ' ' + words[p] : '') + '.';
+    document.querySelectorAll('#tabs button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.p === p)); });
+  }
+  document.querySelectorAll('#tabs button').forEach(function (b) {
+    b.onclick = function () { history.replaceState(null, '', '#' + b.dataset.p); show(b.dataset.p); };
+  });
+  var h = location.hash.slice(1);
+  show(start.hasOwnProperty(h) ? h : 'all');
+})();
+</script>
+<p class=soft style="margin-top:16px">Updated 28 Oct 2026.
 <a href="topcontributors.txt">topcontributors.txt</a></p>
 
 <h2 id="join">How to join the cause</h2>
