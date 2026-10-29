@@ -50,6 +50,7 @@
 
   <table>
     <tr><th>Status</th><td id="status">Not running</td></tr>
+    <tr><th>Search speed</th><td class="n" id="speed">0</td></tr>
     <tr><th>Games</th><td class="n" id="games">0</td></tr>
     <tr><th>Positions</th><td class="n" id="positions">0</td></tr>
     <tr><th>Running for</th><td class="n" id="time">0 min</td></tr>
@@ -95,6 +96,14 @@
     } catch (e) { err = "The app stopped answering. Close it and open it again."; render(state); }
   }
 
+  // a game is about 154 moves at about 550 positions a move (a quarter of moves searched to 1,600, the rest to 200)
+  const GAME_POSITIONS = 85000;
+  function firstGames(s) {
+    if (!s.evals_per_s) return "Games count once they finish.";
+    const left = s.games_at_once * GAME_POSITIONS / s.evals_per_s - (Date.now() / 1000 - s.since);
+    return `Games count once they finish. ${s.games_at_once} play at once, so at this speed the first ones should finish in about ${since(Math.max(left, 60))}.`;
+  }
+
   function since(sec) {
     const m = Math.floor(sec / 60), h = Math.floor(m / 60);
     return h ? `${h} h ${m % 60} min` : `${m} min`;
@@ -111,6 +120,7 @@
     const card = (s.gpus.find(g => g.index === s.gpu) || {}).name || "your graphics card";
     $("status").textContent = on ? `${WORDS[s.status] || "Starting"} on ${card}` :
       s.downloading ? `Getting the network, ${pct}%` : "Not running";
+    $("speed").textContent = on && s.evals_per_s ? `${s.evals_per_s.toLocaleString()} positions a second` : "0";
     $("games").textContent = s.games.toLocaleString();
     $("positions").textContent = s.positions.toLocaleString();
     $("time").textContent = s.since ? since(Date.now() / 1000 - s.since) : "0 min";
@@ -131,6 +141,7 @@
     $("note").classList.toggle("err", !!problem);
     $("note").textContent = problem ||
       (!s.model_ready ? "MayFly's network (about 290 MB) downloads the first time you press Run." :
+       on && !s.games ? firstGames(s) :
        "Games are saved on this computer. Sending them to the leaderboard starts soon.");
     $("ver").textContent = `MayFly ${s.version}, app ${s.app_version}`;
   }

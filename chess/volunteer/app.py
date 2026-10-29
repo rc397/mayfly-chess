@@ -13,6 +13,7 @@ How it fits together
   python chess/volunteer/app.py            the app
   python chess/volunteer/app.py --engine   the engine alone (what Run starts)
 """
+import collections
 import http.server
 import json
 import multiprocessing
@@ -60,9 +61,14 @@ MODEL = os.path.join(DATA, "mayfly_v6.1.onnx")
 MODEL_URL = "https://github.com/rc397/mayfly-chess/releases/download/v6.1/mayfly_v6.1.onnx"
 MODEL_SHA256 = "1e6972836c8657a26a0128790c83921974de264983946782dc9939360f0ecbc7"
 SITE = "https://rc397.github.io/mayfly-chess/"
-APP_VERSION = "0.1"
+APP_VERSION = "0.2"
 # how much of the computer each level gives: the share of CPU cores running searches (the card follows them)
 LEVELS = {"light": 0.25, "half": 0.5, "full": 0.9}
+
+
+def games_at_once(level):
+    """One search process per game, on this share of the cores."""
+    return max(1, int((os.cpu_count() or 4) * LEVELS.get(level, 0.5)))
 
 sys.path.insert(0, CHESS)
 # a source checkout can keep onnxruntime and pywebview in a folder of their own (MAYFLY_LIBS); appended, so they
@@ -163,7 +169,8 @@ class Engine:
         self.proc = None
         self.started = None
         self.games = self.positions = 0
-        self.rate = 0
+        self.rate = self.evals = 0
+        self.recent = collections.deque(maxlen=6)     # the last minute of speed reports
         self.status = "idle"
         self.lines = []
         self.error = ""
@@ -181,7 +188,8 @@ class Engine:
         flags = subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS if os.name == "nt" else 0
         self.proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                                      encoding="utf-8", errors="replace", creationflags=flags)
-        self.started, self.games, self.positions, self.rate = time.time(), 0, 0, 0
+        self.started, self.games, self.positions, self.rate, self.evals = time.time(), 0, 0, 0, 0
+        self.recent.clear()
         self.status, self.error, self.stopping = "starting", "", False
         threading.Thread(target=self._read, daemon=True).start()
 
@@ -193,6 +201,14 @@ class Engine:
             if m:
                 self.games, self.positions, self.rate = (int(x.replace(",", "")) for x in m.groups())
                 self.status = "playing"
+                # the search speed, so a slow card shows it's working long before its first game ends;
+                # averaged over a minute from the first nonzero report, since a slow card answers in bursts
+                e = re.search(r"([\d,]+) evals a second", line)
+                if e:
+                    v = int(e.group(1).replace(",", ""))
+                    if v or self.recent:
+                        self.recent.append(v)
+                        self.evals = round(sum(self.recent) / len(self.recent))
             elif "workers x" in line:
                 self.status = "playing"
             elif line.startswith("server onnx"):
@@ -216,12 +232,10 @@ class Engine:
 
 def engine_main():
     """selfplay_remote on this computer: the onnx server on the chosen card, searches on a share of the cores."""
-    level =LEVELS.get(os.environ.get("MAYFLY_LEVEL", "half"), 0.5)
-    cores = os.cpu_count() or 4
     out = os.path.join(DATA, "out", time.strftime("%Y%m%d_%H%M%S"))
     os.environ.update({
         "SP_BACKEND": "onnx", "SP_ONNX": MODEL, "SP_DEVICE": os.environ.get("MAYFLY_GPU", "0"),
-        "SP_WORKERS": str(max(1, int(cores * level))), "SP_TORCH_STUB": "1", "SP_REPORT": "10",
+        "SP_WORKERS": str(games_at_once(os.environ.get("MAYFLY_LEVEL", "half"))), "SP_TORCH_STUB": "1", "SP_REPORT": "10",
         "SP_SECONDS": str(10 * 365 * 86400), "SP_OUT": out, "SP_STARTS": os.path.join(KIT, "corpus_starts.txt"),
         "VERSION": VERSION, "VERSION_DIR": KIT, "VISITS": "1600", "FULL_FRAC": "0.25", "FAST_VISITS": "200"})
     if os.environ.get("MAYFLY_TEST_VISITS"):        # tests only: small searches, short games
@@ -261,6 +275,8 @@ class App:
         return {"name": self.settings["name"], "gpu": self.settings["gpu"], "level": self.settings["level"],
                 "gpus": self.gpus, "running": e.running(), "status": e.status if e.running() else "idle",
                 "games": e.games, "positions": e.positions, "rate": e.rate,
+                "evals_per_s": e.evals if e.running() else 0,
+                "games_at_once": games_at_once(self.settings["level"]),
                 "since": e.started if e.running() else None, "model_ready": d.done,
                 "downloading": d.active, "download_frac": round(d.frac, 3),
                 "download_error": d.error or (e.error if not e.running() else ""),
