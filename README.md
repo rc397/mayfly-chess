@@ -1,5 +1,7 @@
 # MayFly
 
+<img width="300" height="300" alt="mayfly_watermark_300" src="https://github.com/user-attachments/assets/9d8d59fd-4cc8-4380-a2b2-3955d20ce395" />
+
 **[Contributors and how to help train MayFly](https://rc397.github.io/mayfly-chess/)**
 
 MayFly is a chess engine built on a transformer network of about 146 million parameters. The network reads a position
