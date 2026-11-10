@@ -1,7 +1,7 @@
 MayFly v6 top contributors (self-play and deep labels donated)
 updated 2026-11-10
 
-  1. MayFly (own machines)          15,762,258 positions    64,932 games   695,608 deep labels
+  1. MayFly (own machines)          15,793,078 positions    65,061 games   696,088 deep labels
   2. mdlm250m                        3,068,657 positions    23,313 games         0 deep labels
   3. evemz2026                       1,539,035 positions    11,660 games       221 deep labels
 
