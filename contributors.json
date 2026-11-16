@@ -1,11 +1,11 @@
 {
- "updated": "2026-11-17 07:47",
+ "updated": "2026-11-17 08:06",
  "version": "v6",
  "contributors": [
   {
    "name": "MayFly (own machines)",
-   "positions": 26572038,
-   "games": 126925,
+   "positions": 26584163,
+   "games": 126974,
    "labels": 731016,
    "runs": 66,
    "first": "2026-09-22",
@@ -142,8 +142,8 @@
      0
     ],
     "2026-11-17": [
-     516561,
-     2120,
+     528686,
+     2169,
      0
     ]
    }
