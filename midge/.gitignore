@@ -1,0 +1,4 @@
+# build output and network files are release assets, not part of the repository
+build/
+*.bin
+*.exe
