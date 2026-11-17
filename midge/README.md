@@ -57,15 +57,31 @@ rating-list numbers.
 | Stockfish 19 limited to UCI_Elo 3190 | 10 s + 0.1 s | 100 | 26-52-22 | 52.0% | +14 (-39 to +68) |
 | Stockfish 19 at full strength, 25,000 nodes a move | Midge on 10 s + 0.1 s | 100 | 1-40-59 | 21.0% | -230 (-282 to -186) |
 | MayFly v6.1 on an RTX 5070 Ti | 60 s + 1 s, Midge on 4 threads | 24 | 4-14-6 | 45.8% | -29 (-126 to +64) |
+| MayFly v6.1 on an RTX 5070 Ti | 180 s + 2 s, Midge on 4 threads | 24 | 3-16-5 | 45.8% | -29 (-115 to +54) |
 
 The Critter match in full: Critter 1.6a 64-bit with its own book off, tablebases off and its session file off;
 Hash 64 MB for both; 8 games at a time; 79 games ended in checkmate, 11 by threefold repetition, 6 by
 insufficient material, 3 by the fifty-move rule and 1 at the cap of 400 plies (a draw); no game was lost on time.
 The two Stockfish rows were measured just before the last search change of this version (worth +22 Elo, +8 to
 +35, in self-play). A much older engine at a long time control and a limited Stockfish at a short one are
-different yardsticks, so the rows should not be added up. The MayFly row is the exception to the conditions
+different yardsticks, so the rows should not be added up. The MayFly rows are the exception to the conditions
 above: 12 openings, each from both sides, on another machine, with Stockfish judging a game only if it reaches
-240 plies. We are also testing the two engines together, with Midge checking MayFly's moves.
+240 plies. A third match at 300 s + 3 s is running.
+
+### MayFly and Midge together
+
+The question behind Midge is whether MayFly plays better with Midge checking its moves. Midge searches on spare
+CPU cores while MayFly thinks, and steps in only when MayFly's chosen move looks clearly worse to it. Both tests
+play the pair against MayFly v6.1 alone, 60 s + 1 s, on one machine (RTX 5070 Ti, i7-14700F).
+
+| version | when Midge steps in | games | wins-draws-losses | score | Elo difference (95%) |
+|---|---|---|---|---|---|
+| duo 1 | MayFly's move gives up 0.20 or more of Midge's win chance | 11 | 1-9-1 | 50.0% | stopped early |
+| duo 2 | the same at 0.10, plus clearly won positions and time trouble | 100 | 5-89-6 | 49.5% | -3 (-26 to +19) |
+
+In duo 2 Midge changed MayFly's move on 131 of 6,858 moves (1.9%), and its checks added about 20 ms a move on
+average. The time trouble rule never triggered. So far the pair is not measurably stronger than MayFly alone.
+The duo 2 interval is over single games.
 
 ## Threads and time
 
