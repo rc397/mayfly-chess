@@ -19,14 +19,27 @@ import paths  # noqa: E402
 E = os.environ.get
 
 
-def newest_version(vdir):
-    """The newest version in vdir's versions.json whose weights are on disk, or None."""
+def version_rows(vdir):
+    """The rows of vdir's versions.json, or an empty list."""
     try:
         with open(os.path.join(vdir, "versions.json"), encoding="utf-8-sig") as fh:
-            rows = json.load(fh)
+            return json.load(fh)
     except (OSError, ValueError):
+        return []
+
+
+def on_disk(vdir, name):
+    """A version's weights are here: its .pt, or the CUDA net's .cnw (the Windows download ships only that)."""
+    stem = os.path.splitext(name)[0]
+    return os.path.exists(os.path.join(vdir, name)) or os.path.exists(os.path.join(vdir, stem + ".cnw"))
+
+
+def newest_version(vdir):
+    """The newest version in vdir's versions.json whose weights are on disk, or None."""
+    rows = version_rows(vdir)
+    if not rows:
         return None
-    rows = [r for r in rows if r.get("file") and os.path.exists(os.path.join(vdir, r["file"]))]
+    rows = [r for r in rows if r.get("file") and on_disk(vdir, r["file"])]
     rows.sort(key=lambda r: float(r.get("version", 0)))
     return rows[-1]["file"] if rows else None
 
@@ -45,6 +58,11 @@ for _d in (os.path.join(HERE, "..", "versions"), os.path.join(HERE, "versions"))
 _d = os.path.join(HERE, "..", "syzygy")
 if "SYZYGY_DIR" not in os.environ and os.path.isdir(_d):
     os.environ["SYZYGY_DIR"] = os.path.abspath(_d)
+# a bundle's cuda folder holds the CUDA libraries and the two headers the CUDA net needs (chess/cudanet)
+_d = os.path.join(HERE, "..", "cuda")
+if os.path.isdir(_d):
+    os.environ.setdefault("MAYFLY_CUDA_BIN", os.path.abspath(_d))
+    os.environ.setdefault("MAYFLY_CUDA_INCLUDE", os.path.abspath(_d))
 
 DEFAULT_VERSION = E("VERSION", "mayfly_v3.pt")
 DEFAULT_VISITS = int(E("VISITS", 400))
@@ -75,6 +93,40 @@ def raise_priority():
         k.SetPriorityClass(k.GetCurrentProcess(), ABOVE_NORMAL)
     except Exception:
         pass
+
+
+def row_name(version):
+    """The name a version's row gives it ("MayFly v7 beta 2026-11-14"), or None."""
+    for r in version_rows(E("VERSION_DIR", paths.under("versions"))):
+        if r.get("file") == version and r.get("name"):
+            return str(r["name"])
+    return None
+
+
+def load_without_torch(ver):
+    """The engine with no PyTorch in the process, as in the Windows download.
+
+    The search and the network both run in the C++ module, on the hand-written CUDA net, so only a version sealed
+    for it (engine "cpp" with cuda_net) can play. The tree has no model. The .cnw named for the version is used
+    when its header carries the fingerprint the version's row records. Returns the tree, a label and the device."""
+    from volunteer.torch_stub import install
+    install()
+    import mcts_cpp
+    from mcts import MCTS, pinned_search, versions_on_disk
+    row = next((r for r in versions_on_disk() if r.get("file") == ver), None)
+    if row is None:
+        raise SystemExit(f"no row for {ver} in versions.json")
+    seal = pinned_search(ver)
+    if seal.get("engine") != "cpp" or not seal.get("cuda_net"):
+        raise SystemExit(f"{ver} is not sealed for the CUDA net, and without PyTorch nothing else can run it")
+    tree = MCTS(None, "cuda", batch=48, cache_size=200000).apply(seal)
+    tree.weights_fingerprint = row.get("fingerprint")
+    why = mcts_cpp.covers(tree)
+    if why is None and mcts_cpp.trace_for(tree) is None:
+        why = "no .cnw with this version's fingerprint was found"
+    if why:
+        raise SystemExit(f"{ver} cannot run without PyTorch: {why}")
+    return tree, row.get("name") or os.path.splitext(ver)[0], "cuda"
 
 
 _LOG_LOCK = threading.Lock()
@@ -193,14 +245,23 @@ class Engine:
         # from `load_version` would reach the GUI as a command.
         import contextlib
         with contextlib.redirect_stdout(sys.stderr):
-            import torch                               # noqa: F401, imported for its side effects
-            from mcts import MCTS, pinned_search
-            from play_web import load_version
             ver = self._loading = self.version
-            self.model, self.label, _ = load_version(ver)
-            dev = str(next(self.model.parameters()).device)
-            self.tree = MCTS(self.model, dev, batch=48, cache_size=200000).apply(
-                pinned_search(ver))
+            try:
+                import torch                           # noqa: F401, imported for its side effects
+                have_torch = not getattr(torch, "__mayfly_stub__", False)
+            except ImportError:
+                have_torch = False
+            if have_torch:
+                from mcts import MCTS, pinned_search
+                from play_web import load_version
+                self.model, self.label, _ = load_version(ver)
+                dev = str(next(self.model.parameters()).device)
+                self.tree = MCTS(self.model, dev, batch=48, cache_size=200000).apply(
+                    pinned_search(ver))
+            else:
+                self.model = None
+                self.tree, self.label, dev = load_without_torch(ver)
+            self.label = row_name(ver) or self.label
         log(f"# loaded {self.label} on {dev}")
 
     def reload(self):
@@ -216,7 +277,8 @@ class Engine:
 
     # ------------------------------------------------------------------ the protocol
     def uci(self):
-        say("id name MayFly " + (self.label or self.version.replace(".pt", "")))
+        name = self.label or row_name(self.version) or self.version.replace(".pt", "")
+        say("id name " + (name if name.startswith("MayFly") else "MayFly " + name))
         say("id author the MayFly developers")
         say(f"option name Version type string default {DEFAULT_VERSION}")
         say(f"option name Visits type spin default {DEFAULT_VISITS} min 1 max 10000000")
@@ -241,8 +303,9 @@ class Engine:
             # a version that is not on disk is refused, not loaded: load_version exits the process when
             # it cannot find the file, so a typo in a GUI would end the engine
             vdir = E("VERSION_DIR", paths.under("versions"))
-            if not any(os.path.exists(p) for p in (want if os.path.isabs(want) else os.path.join(vdir, want),
-                                                   os.path.join(HERE, want))):
+            if not on_disk(vdir, want) and not any(
+                    os.path.exists(p) for p in (want if os.path.isabs(want) else os.path.join(vdir, want),
+                                                os.path.join(HERE, want))):
                 log(f"# no version {want} in {vdir}, keeping {self.version}")
                 return
             self.version = want
