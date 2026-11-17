@@ -56,7 +56,8 @@ What you need
 Using it
 - Point a chess GUI or a match runner at mayfly.exe (Cute Chess, Banksia, Arena, cutechess-cli).
 - The first search takes a few seconds longer: the network's GPU code is compiled once and then kept in
-  %LOCALAPPDATA%\\mayfly_cudanet.
+  %LOCALAPPDATA%\\mayfly_cudanet. If the engine is still loading 8 seconds after the first go of a game, it
+  plays a standard first move (1.d4, or the usual reply) and goes on loading behind it.
 - UCI options: Visits (used only when the host gives no clock and no node count), Ponder, SyzygyPath (one or more
   tablebase folders; a folder named syzygy beside mayfly.exe is used by itself), Move Overhead (milliseconds a
   move costs beyond the search; -1 prices it by the gap between moves, as on Lichess), Version (this folder
