@@ -27,8 +27,13 @@ OUT = E("OUT", paths.under("shards"))
 PREFIX = E("PREFIX", "lz")
 SHARD = E("SHARD", "4000000")
 WORKERS = int(E("WORKERS", 3))
+# The workers' tags are TAG_PREFIX0, TAG_PREFIX1 and so on. A second machine's pool takes another letter, so it
+# never adopts shards copied in from the first.
+TAG_PREFIX = E("TAG_PREFIX", "p")
 MIN_FREE_GB = int(E("MIN_FREE_GB", 300))
 AHEAD = int(E("AHEAD", 2))
+# the Leela server limits each connection (about 16 Mbps when measured), but several at once add up
+DOWNLOADERS = int(E("DOWNLOADERS", 1))
 MAX_N = int(sys.argv[1]) if len(sys.argv) > 1 else 100000
 CONVERTER = os.path.join(HERE, "lc0_convert.py")
 
@@ -63,7 +68,7 @@ def worker_tags(n):
     """
     out = []
     for i in range(n):
-        t = f"p{i}"
+        t = f"{TAG_PREFIX}{i}"
         have = sorted(glob.glob(os.path.join(OUT, f"{PREFIX}_{t}[0-9][0-9][0-9].bin")))
         out.append((t, len(have), sum(os.path.getsize(p) for p in have)))
     return out
@@ -214,7 +219,7 @@ def worker(wid, tag, q):
 
 
 def downloader(todo, leftovers, q):
-    """One thread, one connection.
+    """One connection a thread, DOWNLOADERS threads taking turns from one list.
 
     The queue depth it prints shows the bottleneck. Full means the converters are behind, empty
     means the network is the limit."""
@@ -222,8 +227,10 @@ def downloader(todo, leftovers, q):
         if STOP.is_set():
             break
         q.put(p)
-    for url in todo:
-        if STOP.is_set():
+    while not STOP.is_set():
+        with LOCK:
+            url = next(todo, None)
+        if url is None:
             break
         name = url.rsplit("/", 1)[-1]
         while free_gb(RAW) < MIN_FREE_GB and not STOP.is_set():
@@ -249,8 +256,13 @@ def downloader(todo, leftovers, q):
         print(f"  fetched {name} {mb:.0f} MB in {el:.0f}s ({mb*8/max(el,1):.1f} Mbps)"
               f"   {f} fetched, queue {q.qsize()}/{q.maxsize}", flush=True)
         q.put(p)
-    for _ in range(WORKERS):
-        q.put(None)
+    # the last downloader to finish tells the converters to stop
+    with LOCK:
+        STATE["downloaders_done"] = STATE.get("downloaders_done", 0) + 1
+        last = STATE["downloaders_done"] == DOWNLOADERS
+    if last:
+        for _ in range(WORKERS):
+            q.put(None)
 
 
 if __name__ == "__main__":
@@ -282,16 +294,18 @@ if __name__ == "__main__":
     print(f"\n{len(urls)} archives listed, {n_done} already fetched, {len(todo)} to go")
     if leftovers:
         print(f"{len(leftovers)} archive(s) on disk but not converted, those go first")
-    print(f"{WORKERS} converters behind one downloader, {free_gb(RAW):.0f} GB free")
+    print(f"{WORKERS} converters behind {DOWNLOADERS} downloader(s), {free_gb(RAW):.0f} GB free")
     for t, n, sz in worker_tags(WORKERS):
         state = "new" if not n else f"resuming, {n} shard(s), {sz/1e9:.1f} GB"
         print(f"  worker tag {PREFIX}_{t}NNN.bin   {state}")
     print(f"pausing whenever free space drops below {MIN_FREE_GB} GB\n", flush=True)
 
     q = queue.Queue(maxsize=AHEAD + WORKERS)
-    threads = [threading.Thread(target=worker, args=(i, f"p{i}", q), daemon=True)
+    threads = [threading.Thread(target=worker, args=(i, f"{TAG_PREFIX}{i}", q), daemon=True)
                for i in range(WORKERS)]
-    threads.append(threading.Thread(target=downloader, args=(todo, leftovers, q), daemon=True))
+    todo_it = iter(todo)
+    threads += [threading.Thread(target=downloader, args=(todo_it, leftovers if i == 0 else [], q), daemon=True)
+                for i in range(DOWNLOADERS)]
     t0 = time.time()
     for t in threads:
         t.start()

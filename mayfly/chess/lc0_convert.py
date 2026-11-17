@@ -36,6 +36,7 @@ SHARD = int(E("SHARD", 4_000_000))
 MIN_VISITS = int(E("MIN_VISITS", 100))
 FLUSH = 4096
 V6_SIZE = 8356
+V7_SIZE = 8396
 PV_TAKE = 5
 
 # offsets into the v6 record, from the format documentation
@@ -167,6 +168,20 @@ def read_record(buf):
     return ids, c, idx, cps, cp, feat, rule50, plies
 
 
+_HOME_RANK = [4, 2, 3, 5, 6, 3, 2, 4]           # rook, knight, bishop, queen, king, bishop, knight, rook
+
+
+def frc_start(first):
+    """True when a game's first record is a Fischer Random start: every piece home, the pawns unmoved and a
+    back rank other than chess's own. Lc0's BT4 datasets mix such games in with ordinary ones, and their
+    castling does not match our move generator."""
+    ids = decode_planes(np.frombuffer(first, "<u8", 104, OFF_PLANES))
+    ours, theirs = [int(v) for v in ids[0:8]], [int(v) - 6 if v else 0 for v in ids[56:64]]
+    full = (all(1 <= v <= 6 for v in ours) and all(v == 1 for v in ids[8:16])
+            and all(1 <= v <= 6 for v in theirs) and all(v == 7 for v in ids[48:56]))
+    return full and (ours != _HOME_RANK or theirs != _HOME_RANK)
+
+
 def records_in(tar_path):
     """Every v6 record inside a training tar, whose members are gzipped chunks."""
     # A partly downloaded archive ends mid-member. Stop cleanly there and keep what was read.
@@ -190,7 +205,12 @@ def records_in(tar_path):
                     raw = gzip.decompress(raw)
                 except Exception:
                     continue
-            for off in range(0, len(raw) - V6_SIZE + 1, V6_SIZE):
+            # V7 records (Lc0's BT4 datasets) are the V6 record plus 40 bytes at the end, so the stride
+            # changes and the first 8,356 bytes read as before
+            stride = V7_SIZE if len(raw) >= 4 and struct.unpack_from("<I", raw, 0)[0] == 7 else V6_SIZE
+            if len(raw) >= stride and frc_start(raw[:V6_SIZE]):
+                continue                   # a Fischer Random game, whose castling is not ours
+            for off in range(0, len(raw) - stride + 1, stride):
                 yield raw[off:off + V6_SIZE]
     finally:
         tf.close()

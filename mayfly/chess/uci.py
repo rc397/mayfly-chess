@@ -7,8 +7,9 @@ With `TM_PARITY` on, a position that will not resolve may spend a clock lead ove
 
   python chess/uci.py                       then type uci, isready, position startpos, go nodes 400
   env: VERSION=mayfly_v3.pt  VISITS=400  TM_PARITY=0  LOG=uci.log
+  On Linux, chess/mayfly_uci.sh sets the environment for a release bundle (make_release.py).
 """
-import os, sys, threading, time
+import json, os, sys, threading, time
 import chess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -16,8 +17,38 @@ sys.path.insert(0, HERE)
 import paths  # noqa: E402
 
 E = os.environ.get
+
+
+def newest_version(vdir):
+    """The newest version in vdir's versions.json whose weights are on disk, or None."""
+    try:
+        with open(os.path.join(vdir, "versions.json"), encoding="utf-8-sig") as fh:
+            rows = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    rows = [r for r in rows if r.get("file") and os.path.exists(os.path.join(vdir, r["file"]))]
+    rows.sort(key=lambda r: float(r.get("version", 0)))
+    return rows[-1]["file"] if rows else None
+
+
+# Defaults from a release bundle. A bundle keeps its versions folder beside or above this file and may
+# have a syzygy folder above it. When one is found, it is used, and the newest version in it plays with
+# the search it was sealed with. Anything set in the environment wins, and a plain checkout has no such
+# folders, so nothing changes there.
+for _d in (os.path.join(HERE, "..", "versions"), os.path.join(HERE, "versions")):
+    if "VERSION_DIR" not in os.environ and os.path.exists(os.path.join(_d, "versions.json")):
+        os.environ["VERSION_DIR"] = os.path.abspath(_d)
+        if "VERSION" not in os.environ:
+            _v = newest_version(os.environ["VERSION_DIR"])
+            if _v:
+                os.environ["VERSION"] = _v
+_d = os.path.join(HERE, "..", "syzygy")
+if "SYZYGY_DIR" not in os.environ and os.path.isdir(_d):
+    os.environ["SYZYGY_DIR"] = os.path.abspath(_d)
+
 DEFAULT_VERSION = E("VERSION", "mayfly_v3.pt")
 DEFAULT_VISITS = int(E("VISITS", 400))
+SYZYGY_DEFAULT = E("SYZYGY_DIR", paths.under("syzygy"))      # the same default as mcts.TB_PATH
 LOG = E("LOG", "")
 # the same file the board touches, watched by the trainer, which yields while it is fresh
 PLAYING_FILE = E("PLAYING_FILE", os.path.join(E("CKPT_DIR", paths.under("ckpt")), "playing.flag"))
@@ -190,10 +221,15 @@ class Engine:
         say(f"option name Version type string default {DEFAULT_VERSION}")
         say(f"option name Visits type spin default {DEFAULT_VISITS} min 1 max 10000000")
         say("option name Ponder type check default false")
+        # for testers and GUIs. Both leave the engine as it was until they are set.
+        say(f"option name SyzygyPath type string default {SYZYGY_DEFAULT or '<empty>'}")
+        ms = -1 if NET_OVERHEAD is None else int(round(NET_OVERHEAD * 1000))
+        say(f"option name Move Overhead type spin default {ms} min -1 max 10000")
         say("uciok")
 
     def setoption(self, words):
         """`setoption name X value Y`, where either part may contain spaces."""
+        global NET_OVERHEAD
         try:
             i, j = words.index("name"), (words.index("value") if "value" in words else len(words))
         except ValueError:
@@ -201,10 +237,31 @@ class Engine:
         name = " ".join(words[i + 1:j]).lower()
         value = " ".join(words[j + 1:]) if j < len(words) else ""
         if name == "version" and value:
-            self.version = value if value.endswith(".pt") else value + ".pt"
+            want = value if value.endswith(".pt") else value + ".pt"
+            # a version that is not on disk is refused, not loaded: load_version exits the process when
+            # it cannot find the file, so a typo in a GUI would end the engine
+            vdir = E("VERSION_DIR", paths.under("versions"))
+            if not any(os.path.exists(p) for p in (want if os.path.isabs(want) else os.path.join(vdir, want),
+                                                   os.path.join(HERE, want))):
+                log(f"# no version {want} in {vdir}, keeping {self.version}")
+                return
+            self.version = want
             self.reload()
         elif name == "visits" and value.isdigit():
             self.visits = max(1, int(value))
+        elif name == "syzygypath":
+            import contextlib
+            with contextlib.redirect_stdout(sys.stderr):      # the import's chatter is not protocol
+                import mcts
+            mcts.set_tablebase_path("" if value in ("", "<empty>") else value)
+        elif name == "move overhead":
+            # milliseconds a move costs beyond the search, one fixed price (NET_OVERHEAD). -1 is the
+            # Lichess pricing by the gap between moves.
+            try:
+                ms = int(value)
+            except ValueError:
+                return
+            NET_OVERHEAD = None if ms < 0 else ms / 1000.0
 
     def position(self, words):
         # a new position while pondering means the GUI moved on without `stop`, so end it quietly
@@ -487,6 +544,8 @@ class Engine:
 
     def _touch_playing(self):
         """Tell the trainer somebody is playing (it yields the card while this file is fresh)."""
+        if not PLAYING_FILE:
+            return
         try:
             with open(PLAYING_FILE, "w") as fh:
                 fh.write(str(int(time.time())))

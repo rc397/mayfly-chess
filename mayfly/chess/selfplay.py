@@ -194,6 +194,10 @@ def with_noise(tree, rng):
     tree.root_noise = ROOT_NOISE
     tree.noise_alpha = NOISE_ALPHA
     tree.noise_rng = np.random.default_rng(rng.randrange(1 << 62))
+    # The C++ tree has no root noise, so noisy moves search in Python. Cheap moves have no noise and would go
+    # back to the C++ tree, and reusing a C++ root in the Python search crashes, so the whole game stays in Python.
+    if ROOT_NOISE > 0:
+        tree.engine = "python"
     return tree
 
 

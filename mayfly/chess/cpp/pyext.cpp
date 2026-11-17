@@ -244,6 +244,7 @@ int Tree_init(TreeObject* self, PyObject* args, PyObject*)
     s.lcb_floor = num(d, "lcb_floor", s.lcb_floor);
     s.prior_fallback = num(d, "prior_fallback", s.prior_fallback) != 0.0;
     s.cache_size = (size_t)num(d, "cache_size", (double)s.cache_size);
+    s.cache_evict = num(d, "cache_evict", 0.0) != 0.0;
     s.use_tb = num(d, "use_tb", 0.0) != 0.0 && tbfn != Py_None;
     s.tb_pieces = (int)num(d, "tb_pieces", s.tb_pieces);
     s.pipeline = (int)num(d, "pipeline", 0.0);
@@ -511,6 +512,11 @@ PyMODINIT_FUNC PyInit_mayfly_cppsearch(void)
     Py_INCREF(&TreeType);
     if (PyModule_AddObject(m, "Tree", (PyObject*)&TreeType) < 0) {
         Py_DECREF(&TreeType);
+        Py_DECREF(m);
+        return nullptr;
+    }
+    // the settings this build reads beyond milestone 2's, so mcts_cpp.covers() can tell an older build
+    if (PyModule_AddIntConstant(m, "CACHE_EVICT", 1) < 0) {
         Py_DECREF(m);
         return nullptr;
     }

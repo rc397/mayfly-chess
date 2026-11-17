@@ -21,6 +21,7 @@ output and says nothing about the moves it was not asked about.
        PRECISION=bf16      or fp16acc, fp16 autocast with fp16 accumulation and a GradScaler (precision.py)
        COMPILE=0           1 runs the training forward under torch.compile (about 2 minutes to compile at start)
                            Together they trained 1.48x as fast as bf16 eager in an A/B.
+       LOADER_PIN=0 LEGAL_WORKER=0   1 takes the loaders' copies and legality masks off the step (loader_fast.py)
 
 At each hour in VERSION_AT a copy is frozen as mayfly_v1, v2 and so on, with its metrics and corpus size,
 so versions can later be played against each other. A version that was not saved cannot be recovered.
@@ -103,6 +104,70 @@ W_MLH = float(E("W_MLH", 0.1))
 MLH_DETACH = int(E("MLH_DETACH", 30000))
 MLH_SHARE = float(E("MLH_SHARE", 0.25))
 MLH_SINCE = E("MLH_SINCE", "2026-09-24 19:10")
+# MayFly's own self-play as policy rows. SV_SHARE of every policy batch comes from sv_* shards
+# (pack_selfplay_visits.py), whose target is the search's visit spread over its five most visited moves, read
+# like Leela's records. 0 is off.
+SV_SHARE = float(E("SV_SHARE", 0.0))
+# Those rows go last in every policy batch and teach the policy only. Their values are MayFly's own search,
+# which did worse than the other value targets when it was tried, so the value losses on policy rows (W_LZQ, the
+# value distribution) stop before them. Set with the loaders. 0 changes nothing.
+SV_ROWS = 0
+# Leela teaches the evaluations. The action values, which the search reads at every node, stopped improving at
+# about 3M iterations (q 0.467 then, 0.459 at 19.3M) while the policy kept improving, and most of their rows were
+# ChessBench, Stockfish at 50 ms a move. Every policy row already carries its teacher's value of its best move
+# (Leela's search value, or the Lichess deep evaluation), and the forward pass already runs the action-value head
+# on those rows. W_LZQ is the share of the action-value loss taken from them, so the head learns that value on
+# the row's most likely move. The total weight of the action-value loss stays W_Q. 0 is off.
+W_LZQ = float(E("W_LZQ", 0.0))
+# the validation batches of every action-value set, kept at this size when AV_BSZ shrinks so the q, lvq and dhq
+# curves stay on the same positions as before
+VAL_AV_BSZ = int(E("VAL_AV_BSZ", AV_BSZ))
+# A large step on one card. ACCUM batches are added up into one optimiser step, and LR_SCALE multiplies the
+# schedule's rate. ACCUM=8 LR_SCALE=2.828 is the step the TPU trainer takes (1,024 positions at 2.83 times the
+# rate). The iteration still counts batches, as the TPU's does, so every schedule keeps its meaning.
+ACCUM = max(1, int(E("ACCUM", 1)))
+LR_SCALE = float(E("LR_SCALE", 1.0))
+# The optimiser. adamw is the default. muon steps the trunk's 64 weight matrices with orthogonalised momentum
+# (muon.py) and leaves everything else on AdamW. Its state is AdamW's own, so a run can switch either way at a
+# checkpoint with nothing reset. MUON_SCALE sets its step's RMS. 0.26 matches what AdamW's step measured on
+# these matrices at 16.4M iterations.
+OPTIM = E("OPTIM", "adamw").lower()
+MUON_MOMENTUM = float(E("MUON_MOMENTUM", 0.95))
+MUON_SCALE = float(E("MUON_SCALE", 0.26))
+MUON_NS = int(E("MUON_NS", 5))
+# Averaged weights beside the live ones. EMA lists decays per optimiser step, each kept as an exponential
+# average of the weights after every step, scored at every validation on the same batches as the live weights
+# (`ema` in the history) and saved in the resume checkpoint. The live weights train exactly as without it.
+# 0.999 averages about the last thousand steps. Empty is off.
+EMA = [float(x) for x in E("EMA", "").split(",") if x.strip()]
+# One validation sample for the whole process, for comparing arms. VAL_FIXED=1 scores the batches drawn at the
+# first validation again at every later one, so a curve's points differ only by the weights. 0, the default,
+# draws new batches every time.
+VAL_FIXED = E("VAL_FIXED", "0") == "1"
+_VAL_HELD = None
+# Kernel settings, all off by default.
+#   SDPA=1          the encoder's training forward through F.scaled_dot_product_attention directly, the same
+#                   function on the same parameters (chess_net._encode_sdpa). Validation and play never use it.
+#   COMPILE_STEP=1  with COMPILE=1, the losses and the qdist head go into the forward's graph
+#   FUSED_ALL=1     every optimiser group on the fused AdamW kernel. Groups resumed from an older checkpoint come
+#                   back fused=None and would otherwise step on the multi-tensor path.
+#   SYNC_FREE=1     no host sync in the optimiser step. The clip's norm stays on the card and a bad step is
+#                   skipped by the fused kernel itself (needs FUSED_ALL). The norm and the skip count are read
+#                   when printed.
+#   HEAD_SPLIT=1    each head runs only on the rows its loss reads
+SDPA = E("SDPA", "0") == "1"
+COMPILE_STEP = E("COMPILE_STEP", "0") == "1"
+FUSED_ALL = E("FUSED_ALL", "0") == "1"
+SYNC_FREE = E("SYNC_FREE", "0") == "1" and FUSED_ALL
+HEAD_SPLIT = E("HEAD_SPLIT", "0") == "1"
+# The loaders' two stalls (loader_fast.py). LOADER_PIN=1 sends each batch in one pinned copy on a stream of its
+# own, since a pageable copy per array made the trainer's launches wait for the GPU to drain several times a
+# step. LEGAL_WORKER=1 computes the policy rows' legality masks in a small process per loader, off the filler
+# thread and the interpreter lock. The batches are the same bytes either way. Both off by default.
+LOADER_PIN = E("LOADER_PIN", "0") == "1"
+LEGAL_WORKER = E("LEGAL_WORKER", "0") == "1"
+FAST_AV = {"pin": LOADER_PIN}
+FAST_POL = {"pin": LOADER_PIN, "legal_worker": LEGAL_WORKER}
 TAG = E("TAG", "av")
 INIT = E("INIT", "")
 # Every validation rewrites a 1.72 GB resume checkpoint, so validating often wears out an SSD. 10,000
@@ -242,7 +307,7 @@ VERSIONS = os.path.join(VERSION_DIR, "versions.json")
 
 
 @torch.no_grad()
-def recentre_policy(model):
+def recentre_policy(model, skip=None):
     """Subtract the mean row from the policy head's weight and the mean from its bias.
 
     Every logit of a position moves by the same amount, and softmax cannot see a shift common to all
@@ -253,8 +318,65 @@ def recentre_policy(model):
     step (one 4162 x 1024 mean). Used from v4 onwards.
     """
     w, b = model.policy.weight, model.policy.bias
-    w.sub_(w.mean(0, keepdim=True))
-    b.sub_(b.mean())
+    if skip is None:
+        w.sub_(w.mean(0, keepdim=True))
+        b.sub_(b.mean())
+    else:
+        # SYNC_FREE: skip is a flag on the card, and a skipped step leaves the head exactly as it was
+        keep = (~skip).to(w.dtype)
+        w.sub_(w.mean(0, keepdim=True) * keep)
+        b.sub_(b.mean() * keep)
+
+
+def opt_step(model, opt, scaler, sync_free=False, muon=None):
+    """The end of an optimiser step: unscale, clip, skip a bad step, step, update the loss scale, recentre.
+    Returns the clipped norm and whether the step was taken, as Python values (one host sync), or with sync_free
+    as tensors on the card (no sync; every group must be fused, FUSED_ALL)."""
+    if scaler is not None:
+        scaler.unscale_(opt)                     # true gradients before the clip, so 1.0 still means 1.0
+    gn = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    if sync_free:
+        bad = ~torch.isfinite(gn) | (gn > 50.0)
+        opt.found_inf = bad.float()              # the fused kernel leaves weights, moments and step count alone
+        try:
+            opt.step()
+        finally:
+            del opt.found_inf
+        if scaler is not None:
+            scaler.update()
+        recentre_policy(model, bad)
+        return gn, ~bad
+    gn = float(gn)
+    if not math.isfinite(gn) or gn > 50.0:
+        opt.zero_grad()
+        if scaler is not None:
+            scaler.update()                      # an overflow lowers the scale; without this it skips forever
+        return gn, False
+    # The optimiser steps itself, never scaler.step(opt). The gradients are already unscaled and proved finite, and
+    # update() needs only the inf check unscale_ recorded. scaler.step would hand a fused optimiser found_inf, but a
+    # resumed run's older param groups come back as fused=None and step on the multi-tensor path, which asserts
+    # found_inf is None.
+    if muon is not None:
+        muon.step()                              # the trunk's matrices; it clears their gradients for AdamW
+    opt.step()
+    if scaler is not None:
+        scaler.update()
+    recentre_policy(model)
+    return gn, True
+
+
+def make_fused(opt, device):
+    """FUSED_ALL: every group on the fused AdamW kernel, its step counts moved onto the card as fused keeps them.
+    The same update as the multi-tensor path, one pass over memory instead of about ten."""
+    n = 0
+    for g in opt.param_groups:
+        if not g.get("fused"):
+            g["fused"], g["foreach"] = True, None
+            n += len(g["params"])
+    for st in opt.state.values():
+        if "step" in st and torch.is_tensor(st["step"]) and st["step"].device.type != "cuda":
+            st["step"] = st["step"].to(device, torch.float32)
+    return n
 
 
 def lr_at(it, hours=0.0):
@@ -467,12 +589,22 @@ def mleft_loss(pred, plies, valid):
     return (hub * w).sum() / n, (err.abs() * w).sum() / n * 100.0
 
 
-def step_batch(model, used, av, pol, want_parts=False, dp=None, mlh=None, lv=None, fs=None, dh=None, st=None):
+def step_batch(model, used, av, pol, want_parts=False, dp=None, mlh=None, lv=None, fs=None, dh=None, st=None,
+               sv=None, core=None, split=False):
     """One forward pass over both corpora, each loss applied to its own slice.
 
     `dp` is route 1's own labels (MayFly's positions, every legal move scored by Stockfish), in the
     same record format as the action-value corpus and mixed into the same slice as a fixed share of
-    every batch (DP_SHARE). `lv`, `fs`, `dh` and `st` are further fixed shares of the same slice."""
+    every batch (DP_SHARE). `lv`, `fs`, `dh` and `st` are further fixed shares of the same slice.
+
+    `core` is batch_loss, or batch_loss under torch.compile (COMPILE_STEP=1), which then puts the
+    losses and the qdist head into the same graph as the forward pass."""
+    a, p, ml = gather_batch(av, pol, dp=dp, mlh=mlh, lv=lv, fs=fs, dh=dh, st=st, sv=sv)
+    return (core or batch_loss)(model, used, a, p, ml, want_parts=want_parts, split=split)
+
+
+def gather_batch(av, pol, dp=None, mlh=None, lv=None, fs=None, dh=None, st=None, sv=None):
+    """The next batch from every loader, action-value slices first, then the policy slices."""
     a = av.next()
     if dp is not None:
         d = dp.next()
@@ -492,54 +624,112 @@ def step_batch(model, used, av, pol, want_parts=False, dp=None, mlh=None, lv=Non
     p = pol.next()
     if mlh is not None:
         p = tuple(torch.cat([x, y], 0) for x, y in zip(p, mlh.next()))
+    if sv is not None:                              # last, so the value losses can stop before them (SV_ROWS)
+        p = tuple(torch.cat([x, y], 0) for x, y in zip(p, sv.next()))
     ml = None
     if MLH:
         p, ml = p[:-2], p[-2:]                      # plies left and whether the row carries it
+    return a, p, ml
+
+
+def batch_loss(model, used, a, p, ml, want_parts=False, split=False):
+    """The forward pass and every loss on one gathered batch. split (HEAD_SPLIT=1) has the model run
+    each head only on the rows its loss reads, the same numbers."""
     ids = torch.cat([a[0], p[0]], 0)
     cast = torch.cat([a[1], p[1]], 0)
     hm = torch.cat([a[2], p[2]], 0)
     ep = torch.cat([a[3], p[3]], 0)
-    with autocast_ctx(used):
-        out = model(ids, cast, hm, ep)
     n = a[0].shape[0]
-    av_out = {"qvalue": out["qvalue"][:n]}
-    pol_out = {k: v[n:] for k, v in out.items() if k not in ("qvalue", "qvalue_att")}
+    with autocast_ctx(used):
+        out = model(ids, cast, hm, ep, split=n) if split else model(ids, cast, hm, ep)
+    ra = (lambda t: t) if split else (lambda t: t[:n])          # an action-value head's rows
+    rp = (lambda t: t) if split else (lambda t: t[n:])          # every other head's rows
+    av_out = {"qvalue": ra(out["qvalue"])}
+    pol_out = {k: (v[n:] if k == "h" else rp(v)) for k, v in out.items() if k not in ("qvalue", "qvalue_att")}
     lq, mae = q_loss(av_out, a[4], a[5])
     lpol, lp, lv = policy_losses(pol_out, *p[4:])
     # Every float() here is a GPU sync that stalls the CPU. The training loop never reads `parts` (the
     # log's numbers come from validate), so they are computed only when `want_parts` asks for them.
     d = (lambda t: float(t.detach())) if want_parts else (lambda t: None)
-    total = W_Q * lq + lpol
     parts = {"q": d(lq), "mae": d(mae), "policy": d(lp), "value": d(lv)}
+    vr = p[4].shape[0] - SV_ROWS                    # the policy rows whose values teach (self-play rows sit last)
+    best = p[4][:vr].argmax(-1) if W_LZQ else None  # each policy row's most likely move (W_LZQ)
+    if W_LZQ:
+        lzq, _ = q_loss({"qvalue": rp(out["qvalue"])[:vr]}, best, p[5][:vr])
+        parts["lzq"] = d(lzq)
+        lq = (1.0 - W_LZQ) * lq + W_LZQ * lzq
+    total = W_Q * lq + lpol
     if "policy_att" in out:
         # the same targets as the CLS heads, the same legality mask, the same weights between them
-        lq_att, _ = q_loss({"qvalue": out["qvalue_att"][:n]}, a[4], a[5])
-        lp_att = policy_ce(out["policy_att"][n:], p[4], p[12] if len(p) > 12 else None)
+        lq_att, _ = q_loss({"qvalue": ra(out["qvalue_att"])}, a[4], a[5])
+        if W_LZQ:
+            lzq_att, _ = q_loss({"qvalue": rp(out["qvalue_att"])[:vr]}, best, p[5][:vr])
+            lq_att = (1.0 - W_LZQ) * lq_att + W_LZQ * lzq_att
+        lp_att = policy_ce(rp(out["policy_att"]), p[4], p[12] if len(p) > 12 else None)
         total = total + W_ATT * (W_Q * lq_att + lp_att)
         parts.update({"att_q": d(lq_att), "att_policy": d(lp_att)})
     if DIST:
         c = centres(out["h"].device)
         lqd, qd_mae = dist_loss(model.qdist_of(out["h"][:n], a[4]), a[5], c)
-        lvd, vd_mae = dist_loss(out["vdist"][n:], p[5], c)
+        lvd, vd_mae = dist_loss(rp(out["vdist"])[:vr], p[5][:vr], c)
         total = total + W_QDIST * lqd + W_VDIST * lvd
         parts.update({"qdist": d(lqd), "qdist_mae": d(qd_mae),
                       "vdist": d(lvd), "vdist_mae": d(vd_mae)})
     if ml is not None and "mleft" in out:
-        lm, m_mae = mleft_loss(out["mleft"][n:], ml[0], ml[1])
+        lm, m_mae = mleft_loss(rp(out["mleft"]), ml[0], ml[1])
         total = total + W_MLH * lm
         parts.update({"mleft": d(lm), "mleft_mae": d(m_mae)})
     return total, parts
 
 
+def keep_outside_points(hist):
+    """The history with any point val_point.py wrote into the file meanwhile (a TPU session's checkpoint, marked
+    "src"), so rewriting the file from the checkpoint's own history never drops them. In iteration order."""
+    try:
+        on_file = json.load(open(HIST))
+    except (OSError, ValueError):
+        return hist
+    have = {r.get("it") for r in hist}
+    extra = [r for r in on_file if "src" in r and r.get("it") not in have]
+    return sorted(hist + extra, key=lambda r: r.get("it", 0)) if extra else hist
+
+
 @torch.no_grad()
-def validate(model, used, av, pol, n, mlv=None, lvv=None, fsv=None, dhv=None, stv=None):
+def validate(model, used, av, pol, n, mlv=None, lvv=None, fsv=None, dhv=None, stv=None, ema=None):
+    """The validation numbers, and under v["ema"] the same for each set of averaged weights in `ema`
+    ({name: tensors in model.parameters() order}). The batches are drawn first, then scored: every loader has its
+    own thread and generator, so they are exactly the ones the interleaved draw gave, and every set of weights is
+    scored on the very same ones."""
+    global _VAL_HELD
+    if _VAL_HELD is not None:
+        main, side = _VAL_HELD
+    else:
+        main = [(av.next(), pol.next()) for _ in range(n)]
+        side = {k: ([ld.next() for _ in range(n)] if ld is not None else None)
+                for k, ld in (("ml", mlv), ("lv", lvv), ("fs", fsv), ("dh", dhv), ("st", stv))}
+        if VAL_FIXED:
+            _VAL_HELD = (main, side)
     model.eval()
+    v = _score(model, used, main, side, n)
+    if ema:
+        params = list(model.parameters())
+        live = [p.detach().clone() for p in params]
+        v["ema"] = {}
+        for name, w in ema.items():
+            torch._foreach_copy_(params, w)
+            v["ema"][name] = _score(model, used, main, side, n)
+        torch._foreach_copy_(params, live)
+        del live
+    model.train()
+    return v
+
+
+def _score(model, used, main, side, n):
     tot = {"q": 0.0, "mae": 0.0, "policy": 0.0, "value": 0.0, "top1": 0.0}
     # Both metrics, every time, whether or not the objective is masked. `policy` and `top1` stay as v1
     # to v3 measured them. The `_legal` pair is measured on the distribution `_expand` hands to PUCT and
     # is the only one that compares a masked version with an unmasked one.
-    for _ in range(n):
-        a, p = av.next(), pol.next()
+    for a, p in main:
         with autocast_ctx(used):
             oa = model(a[0], a[1], a[2], a[3])
             op = model(p[0], p[1], p[2], p[3])
@@ -549,6 +739,10 @@ def validate(model, used, av, pol, n, mlv=None, lvv=None, fsv=None, dhv=None, st
         tot["policy"] += float(-(p[4] * F.log_softmax(op["policy"].float(), -1)).sum(-1).mean())
         tot["value"] += float(F.binary_cross_entropy_with_logits(op["value"].float(), p[5]))
         tot["top1"] += float((op["policy"].argmax(-1) == p[4].argmax(-1)).float().mean())
+        # the action values on the policy rows' own teacher values (W_LZQ's target), scored whether or not it trains
+        lzq, lz_mae = q_loss(op, p[4].argmax(-1), p[5])
+        tot["lz_q"] = tot.get("lz_q", 0.0) + float(lzq)
+        tot["lz_mae"] = tot.get("lz_mae", 0.0) + float(lz_mae)
         if len(p) > 12:
             ml = op["policy"].float().masked_fill(~p[12], -1e9)
             tot["policy_legal"] = tot.get("policy_legal", 0.0) + float(
@@ -579,53 +773,24 @@ def validate(model, used, av, pol, n, mlv=None, lvv=None, fsv=None, dhv=None, st
                     (al.argmax(-1) == p[4].argmax(-1)).float().mean())
                 tot["att_top3_legal"] = tot.get("att_top3_legal", 0.0) + float(
                     (al.topk(3, -1).indices == p[4].argmax(-1, keepdim=True)).any(-1).float().mean())
-    if mlv is not None:
+    if side["ml"] is not None:
         # the moves-left head on its own held-out labelled records, the same count of batches
-        for _ in range(n):
-            q = mlv.next()
+        for q in side["ml"]:
             with autocast_ctx(used):
                 oq = model(q[0], q[1], q[2], q[3])
             if "mleft" in oq:
                 lm, m_mae = mleft_loss(oq["mleft"], q[-2], q[-1])
                 tot["mleft"] = tot.get("mleft", 0.0) + float(lm)
                 tot["mleft_mae"] = tot.get("mleft_mae", 0.0) + float(m_mae)
-    if lvv is not None:
-        # the action values on held-out Lichess positions, the deep labels, scored like `q`
-        for _ in range(n):
-            a = lvv.next()
+    # the action values on held-out Lichess positions (the deep labels), fishtest positions, deep second
+    # labels (DH_SHARE) and search targets (ST_SHARE), each scored like `q`
+    for k in ("lv", "fs", "dh", "st"):
+        for a in side[k] or ():
             with autocast_ctx(used):
                 oa = model(a[0], a[1], a[2], a[3])
             lq, mae = q_loss(oa, a[4], a[5])
-            tot["lv_q"] = tot.get("lv_q", 0.0) + float(lq)
-            tot["lv_mae"] = tot.get("lv_mae", 0.0) + float(mae)
-    if fsv is not None:
-        # the same on held-out fishtest positions
-        for _ in range(n):
-            a = fsv.next()
-            with autocast_ctx(used):
-                oa = model(a[0], a[1], a[2], a[3])
-            lq, mae = q_loss(oa, a[4], a[5])
-            tot["fs_q"] = tot.get("fs_q", 0.0) + float(lq)
-            tot["fs_mae"] = tot.get("fs_mae", 0.0) + float(mae)
-    if dhv is not None:
-        # the same on held-out deep second labels (DH_SHARE)
-        for _ in range(n):
-            a = dhv.next()
-            with autocast_ctx(used):
-                oa = model(a[0], a[1], a[2], a[3])
-            lq, mae = q_loss(oa, a[4], a[5])
-            tot["dh_q"] = tot.get("dh_q", 0.0) + float(lq)
-            tot["dh_mae"] = tot.get("dh_mae", 0.0) + float(mae)
-    if stv is not None:
-        # the same on held-out search targets (ST_SHARE)
-        for _ in range(n):
-            a = stv.next()
-            with autocast_ctx(used):
-                oa = model(a[0], a[1], a[2], a[3])
-            lq, mae = q_loss(oa, a[4], a[5])
-            tot["st_q"] = tot.get("st_q", 0.0) + float(lq)
-            tot["st_mae"] = tot.get("st_mae", 0.0) + float(mae)
-    model.train()
+            tot[f"{k}_q"] = tot.get(f"{k}_q", 0.0) + float(lq)
+            tot[f"{k}_mae"] = tot.get(f"{k}_mae", 0.0) + float(mae)
     return {k: v / n for k, v in tot.items()}
 
 
@@ -655,6 +820,9 @@ if __name__ == "__main__":
     print(f"[data] training loaders seeded {data_seed}, fresh this start so a resume does not "
           f"replay the stream (DATA_SEED={data_seed} reproduces it); validation stays on "
           f"SEED+1={SEED + 1}", flush=True)
+    if LOADER_PIN or LEGAL_WORKER:
+        print(f"[loaders] one pinned copy a batch on its own stream: {'on' if LOADER_PIN else 'off'}; legality "
+              f"masks in worker processes: {'on' if LEGAL_WORKER else 'off'} (loader_fast.py)", flush=True)
     # Route 1's share of every batch. dp_* shards are what deep_label writes from MayFly's own self-play
     # and games, in the same format as av_*. DP_SHARE of AV_BSZ rows come from there and the rest from
     # ChessBench, so the batch size, memory and loss are unchanged. Off at 0 or with no dp shard yet.
@@ -677,13 +845,13 @@ if __name__ == "__main__":
         print(f"[search] ST_SHARE={ST_SHARE:g} but no st_* shard in {SHARDS}; slice off", flush=True)
         st_rows = 0
     av = AVLoader(SHARDS, batch=AV_BSZ - dp_rows - lv_rows - fs_rows - dh_rows - st_rows, split="train", device=device,
-                  seed=data_seed, refresh=600)
+                  seed=data_seed, refresh=600, **FAST_AV)
     if dp_rows and DP_DOWN_KEYS and DP_DOWN_WEIGHT < 1.0 and not os.path.exists(DP_DOWN_KEYS):
         # a weight asked for and not applied is a silent change of recipe, so stop rather than guess
         raise SystemExit(f"DP_DOWN_KEYS={DP_DOWN_KEYS} does not exist; not training without it")
     dp = (AVLoader(SHARDS, batch=dp_rows, split="train", device=device, seed=data_seed + 2,
                    refresh=600, prefix="dp", thin=DP_THIN, down_keys=DP_DOWN_KEYS or None,
-                   down_weight=DP_DOWN_WEIGHT) if dp_rows else None)
+                   down_weight=DP_DOWN_WEIGHT, **FAST_AV) if dp_rows else None)
     if dp is not None:
         print(f"[route 1] {dp_rows} of every {AV_BSZ} action values come from dp_* shards "
               f"({100 * dp_rows / AV_BSZ:.0f}%), reads thinned {DP_THIN}x", flush=True)
@@ -693,54 +861,65 @@ if __name__ == "__main__":
     lv = lvv = None
     if lv_rows:
         lv = AVLoader(SHARDS, batch=lv_rows, split="train", device=device, seed=data_seed + 4,
-                      refresh=600, prefix="lv", thin=LV_THIN)
-        lvv = AVLoader(SHARDS, batch=AV_BSZ, split="val", device=device, seed=SEED + 1,
-                       refresh=600, prefix="lv")
+                      refresh=600, prefix="lv", thin=LV_THIN, **FAST_AV)
+        lvv = AVLoader(SHARDS, batch=VAL_AV_BSZ, split="val", device=device, seed=SEED + 1,
+                       refresh=600, prefix="lv", **FAST_AV)
         print(f"[lichess] {lv_rows} of every {AV_BSZ} action values come from lv_* shards "
               f"({100 * lv_rows / AV_BSZ:.0f}%), reads thinned {LV_THIN}x; ChessBench keeps "
               f"{AV_BSZ - dp_rows - lv_rows - fs_rows - dh_rows - st_rows}", flush=True)
     fs = fsv = None
     if fs_rows:
         fs = AVLoader(SHARDS, batch=fs_rows, split="train", device=device, seed=data_seed + 5,
-                      refresh=600, prefix="fs", thin=FS_THIN)
-        fsv = AVLoader(SHARDS, batch=AV_BSZ, split="val", device=device, seed=SEED + 1,
-                       refresh=600, prefix="fs")
+                      refresh=600, prefix="fs", thin=FS_THIN, **FAST_AV)
+        fsv = AVLoader(SHARDS, batch=VAL_AV_BSZ, split="val", device=device, seed=SEED + 1,
+                       refresh=600, prefix="fs", **FAST_AV)
         print(f"[fishtest] {fs_rows} of every {AV_BSZ} action values come from fs_* shards "
               f"({100 * fs_rows / AV_BSZ:.0f}%), reads thinned {FS_THIN}x; ChessBench keeps "
               f"{AV_BSZ - dp_rows - lv_rows - fs_rows - dh_rows - st_rows}", flush=True)
     dh = dhv = None
     if dh_rows:
         dh = AVLoader(SHARDS, batch=dh_rows, split="train", device=device, seed=data_seed + 6,
-                      refresh=600, prefix="dh", thin=DH_THIN)
-        dhv = AVLoader(SHARDS, batch=AV_BSZ, split="val", device=device, seed=SEED + 1,
-                       refresh=600, prefix="dh")
+                      refresh=600, prefix="dh", thin=DH_THIN, **FAST_AV)
+        dhv = AVLoader(SHARDS, batch=VAL_AV_BSZ, split="val", device=device, seed=SEED + 1,
+                       refresh=600, prefix="dh", **FAST_AV)
         print(f"[deep] {dh_rows} of every {AV_BSZ} action values come from dh_* shards "
               f"({100 * dh_rows / AV_BSZ:.1f}%), reads thinned {DH_THIN}x; ChessBench keeps "
               f"{AV_BSZ - dp_rows - lv_rows - fs_rows - dh_rows - st_rows}", flush=True)
     st = stv = None
     if st_rows:
         st = AVLoader(SHARDS, batch=st_rows, split="train", device=device, seed=data_seed + 7,
-                      refresh=600, prefix="st", thin=ST_THIN)
-        stv = AVLoader(SHARDS, batch=AV_BSZ, split="val", device=device, seed=SEED + 1,
-                       refresh=600, prefix="st")
+                      refresh=600, prefix="st", thin=ST_THIN, **FAST_AV)
+        stv = AVLoader(SHARDS, batch=VAL_AV_BSZ, split="val", device=device, seed=SEED + 1,
+                       refresh=600, prefix="st", **FAST_AV)
         print(f"[search] {st_rows} of every {AV_BSZ} action values come from st_* shards "
               f"({100 * st_rows / AV_BSZ:.1f}%), reads thinned {ST_THIN}x; ChessBench keeps "
               f"{AV_BSZ - dp_rows - lv_rows - fs_rows - dh_rows - st_rows}", flush=True)
-    avv = AVLoader(SHARDS, batch=AV_BSZ, split="val", device=device, seed=SEED + 1, refresh=600)
+    avv = AVLoader(SHARDS, batch=VAL_AV_BSZ, split="val", device=device, seed=SEED + 1, refresh=600, **FAST_AV)
     mlh_rows = int(round(POL_BSZ * MLH_SHARE)) if MLH else 0
-    pol = PackedLoader(SHARDS, batch=POL_BSZ - mlh_rows, split="train", device=device,
+    sv_rows = int(round(POL_BSZ * SV_SHARE))
+    if sv_rows and not glob.glob(os.path.join(SHARDS, "sv_*.bin")):
+        print(f"[self-play] SV_SHARE={SV_SHARE:g} but no sv_* shard in {SHARDS}; slice off", flush=True)
+        sv_rows = 0
+    sv = None
+    SV_ROWS = sv_rows
+    if sv_rows:
+        sv = PackedLoader(SHARDS, batch=sv_rows, split="train", device=device, seed=data_seed + 7,
+                          sources=("sv",), refresh=600, legal=MASK_LEGAL, mleft=MLH, **FAST_POL)
+        print(f"[self-play] {sv_rows} of every {POL_BSZ} policy rows come from sv_* shards "
+              f"({100 * sv_rows / POL_BSZ:.0f}%), {len(sv.paths)} shard(s): the search's visit spread", flush=True)
+    pol = PackedLoader(SHARDS, batch=POL_BSZ - mlh_rows - sv_rows, split="train", device=device,
                        seed=data_seed + 3, sources=SOURCES, refresh=600, legal=MASK_LEGAL,
-                       mleft=MLH)
+                       mleft=MLH, **FAST_POL)
     mlh = mlv = None
     if MLH:
         since = time.mktime(time.strptime(MLH_SINCE, "%Y-%m-%d %H:%M"))
         mlh = PackedLoader(SHARDS, batch=mlh_rows, split="train", device=device,
                            seed=data_seed + 5, sources=("lz",), refresh=600, legal=MASK_LEGAL,
-                           mleft=True, need_flag=8, min_mtime=since)
+                           mleft=True, need_flag=8, min_mtime=since, **FAST_POL)
         mlv = PackedLoader(SHARDS, batch=POL_BSZ, split="val", device=device, seed=SEED + 2,
                            sources=("lz",), refresh=0, legal=True, mleft=True, need_flag=8,
                            min_mtime=since, val_size=8192,
-                           val_cache=os.path.join(CKPT_DIR, f"val_mleft_{TAG}.npy"))
+                           val_cache=os.path.join(CKPT_DIR, f"val_mleft_{TAG}.npy"), **FAST_POL)
         # The cache is read back on every start, so a set drawn while few labelled records existed would
         # be the yardstick for good. Until it holds nearly 8,192 distinct positions it is drawn again.
         uniq = len({r.tobytes() for r in mlv.fixed})
@@ -757,7 +936,7 @@ if __name__ == "__main__":
     # the mask still records what it would score with one.
     polv = PackedLoader(SHARDS, batch=POL_BSZ, split="val", device=device, seed=SEED + 1,
                         sources=SOURCES, refresh=600, legal=True,
-                        val_cache=os.path.join(CKPT_DIR, f"val_policy_{TAG}.npy"))
+                        val_cache=os.path.join(CKPT_DIR, f"val_policy_{TAG}.npy"), **FAST_POL)
     print(av.describe(), flush=True)
     print(pol.describe(), flush=True)
 
@@ -765,6 +944,7 @@ if __name__ == "__main__":
                      dropout=DROPOUT,
                      att=ATT, dist=DIST, mlh=MLH).to(device)
     model, used = apply_precision(model)
+    model.fast_attn = SDPA
     # fp16 scales its loss. Five exponent bits flush the smallest gradients to zero unless the loss is multiplied
     # up first and the gradients divided back down before the clip (bf16 has fp32's range and does not need it).
     # The scaler lowers the scale when a step overflows, which the skip below counts. It starts at 1,024, since
@@ -776,10 +956,14 @@ if __name__ == "__main__":
     used_val = "bf16" if used == "fp16acc" else used
     # The training forward goes through torch.compile with COMPILE=1. Validation, the versions and every save use the
     # plain module, which shares the same weights.
-    fwd = torch.compile(model) if COMPILE else model
+    core = torch.compile(batch_loss) if COMPILE and COMPILE_STEP else None
+    fwd = torch.compile(model) if COMPILE and not COMPILE_STEP else model
     if COMPILE:
         print(f"torch.compile on: the first step compiles (about 2 minutes); inductor cache "
               f"{os.environ.get('TORCHINDUCTOR_CACHE_DIR')}", flush=True)
+    if SDPA or COMPILE_STEP or FUSED_ALL or SYNC_FREE or HEAD_SPLIT:
+        print(f"[kernels] SDPA={int(SDPA)} COMPILE_STEP={int(COMPILE_STEP)} FUSED_ALL={int(FUSED_ALL)} "
+              f"SYNC_FREE={int(SYNC_FREE)} HEAD_SPLIT={int(HEAD_SPLIT)}", flush=True)
     # The optional heads get optimizer groups of their own, after the original two, so a checkpoint written
     # before they existed still loads its AdamW moments. In the same groups they would be a size mismatch,
     # and the fallback would be fresh moments for the whole model.
@@ -816,7 +1000,7 @@ if __name__ == "__main__":
           f"batch {AV_BSZ} action values + {POL_BSZ} positions | {used} | {device}", flush=True)
 
     start, hist, best, trained, att_since, dist_since = 0, [], 1e9, 0.0, None, None
-    mlh_since = None
+    mlh_since, ck = None, None
     # RESUME=1 means continue the run. If its checkpoint is not there, something is misconfigured, and a
     # fresh model must not be trained over the top of the real run.
     if RESUME and not os.path.exists(LAST) and E("FRESH", "0") != "1":
@@ -888,11 +1072,45 @@ if __name__ == "__main__":
               f"{len(missing)} new tensor(s) left at init: {', '.join(missing) or 'none'}",
               flush=True)
 
+    # averaged weights carry on from the checkpoint's for the same decay, else start at the live weights
+    params = list(model.parameters())
+    pnames = [n for n, _ in model.named_parameters()]
+    ema = {}
+    for dec in EMA:
+        got = ((ck or {}).get("ema") or {}).get(f"{dec:g}") or {}
+        ema[f"{dec:g}"] = [got[n].to(device).float() if n in got else p.detach().clone().float()
+                           for n, p in zip(pnames, params)]
+        print(f"[ema] {dec:g}: weights averaged over about {1 / (1 - dec):,.0f} steps, "
+              f"{'carried on from the checkpoint' if got else 'starting at the live weights'}", flush=True)
+    ema_state = lambda: ({k: dict(zip(pnames, w)) for k, w in ema.items()} if ema else None)
     # the loaded checkpoint sits on the card (map_location=device) and its weights were copied into
     # the parameters, so keeping the dict would hold a second copy of them for the whole run
     ck = None
     for g in extra[len(opt.param_groups) - 2:]:
         opt.add_param_group(g)                       # a fresh run, or one started from INIT
+    muon = None
+    if OPTIM == "muon":
+        from muon import Muon, is_trunk_matrix
+        mats = [(n, p) for n, p in model.named_parameters() if is_trunk_matrix(n)]
+        muon = Muon(opt, mats, momentum=MUON_MOMENTUM, scale=MUON_SCALE, steps=MUON_NS)
+        warm = sum(1 for _, p in mats if "exp_avg" in opt.state[p])
+        print(f"[optim] muon on {len(mats)} trunk matrices ({sum(p.numel() for _, p in mats) / 1e6:.0f}M params), "
+              f"momentum {MUON_MOMENTUM}, step RMS {MUON_SCALE}, {MUON_NS} Newton-Schulz steps; {warm} carry on "
+              f"from AdamW's own momentum; the rest stays on AdamW", flush=True)
+    elif OPTIM != "adamw":
+        raise SystemExit(f"OPTIM={OPTIM}: adamw or muon")
+    if FUSED_ALL and device == "cuda":
+        n = make_fused(opt, device)
+        if n:
+            print(f"[kernels] {n} parameter tensors moved from the multi-tensor AdamW onto the fused one", flush=True)
+    if SYNC_FREE and (muon is not None or ema):
+        raise SystemExit("SYNC_FREE takes a plain AdamW run: it has no skip flag for Muon or the averages")
+    if W_LZQ and HEAD_SPLIT:
+        raise SystemExit("W_LZQ reads the action-value head on the policy rows, and HEAD_SPLIT runs it only on the "
+                         "action-value rows")
+    if W_LZQ:
+        print(f"[leela evals] {100 * W_LZQ:.0f}% of the action-value loss from the {POL_BSZ} policy rows' own values "
+              f"of their best move, {100 * (1 - W_LZQ):.0f}% from the {AV_BSZ} action-value rows", flush=True)
     if ATT and att_since is None:
         att_since = start
     if DIST and dist_since is None:
@@ -919,17 +1137,27 @@ if __name__ == "__main__":
               f"{lr_at(COOL_FROM + COOL_STEPS, trained):.3g} at the end", flush=True)
     t0 = time.time()
     gnorm, skipped = 1.0, 0
+    if SYNC_FREE:                                    # the same two numbers kept on the card
+        gnorm_t = torch.ones((), device=device)
+        skipped_t = torch.zeros((), dtype=torch.long, device=device)
     aside = Aside(ASIDE_FILE, os.path.join(CKPT_DIR, "train_heartbeat")) if ASIDE_FILE else None
     model.train()
     for it in range(start, ITERS + 1):
+        if SYNC_FREE and (it % VAL_EVERY == 0 or (HEARTBEAT and it % HEARTBEAT == 0)):
+            was, gnorm, skipped = skipped, float(gnorm_t), int(skipped_t)       # read only when printed
+            if skipped > was:
+                print(f"  {skipped - was} step(s) skipped before it {it:,} ({skipped} so far"
+                      f"{f', loss scale {scaler.get_scale():g}' if scaler is not None else ''})", flush=True)
         if it % VAL_EVERY == 0:
-            v = validate(model, used_val, avv, polv, VAL_BATCHES, mlv=mlv, lvv=lvv, fsv=fsv, dhv=dhv, stv=stv)
+            v = validate(model, used_val, avv, polv, VAL_BATCHES, mlv=mlv, lvv=lvv, fsv=fsv, dhv=dhv, stv=stv,
+                         ema=ema or None)
             el = time.time() - t0
             hours = trained + el / 3600
             rate = (it - start) * (AV_BSZ + POL_BSZ) / max(el, 1)
             hist.append({"it": it, **v, "t": round(el, 1), "pos_s": round(rate),
                          "av_corpus": len(av), "pol_corpus": len(pol),
                          "grad": round(gnorm, 3), "skipped": skipped})
+            hist = keep_outside_points(hist)
             json.dump(hist, open(HIST, "w"), indent=1)
             # Select on the objective actually being trained. With MASK_LEGAL on, the unmasked `policy`
             # may drift upward, so scoring on it would freeze the best-of checkpoint at old weights.
@@ -945,7 +1173,8 @@ if __name__ == "__main__":
             save_atomic({"model": model.state_dict(), "optim": opt.state_dict(), "iter": it,
                          "hist": hist, "best": best, "trained_hours": hours,
                          "att_since": att_since, "dist_since": dist_since, "mlh_since": mlh_since,
-                         "yardstick": YARDSTICK, "data_seed": data_seed, "scaler": scaler_state()}, LAST)
+                         "yardstick": YARDSTICK, "data_seed": data_seed, "scaler": scaler_state(),
+                         "ema": ema_state()}, LAST)
             # A version is owed whenever the clock has passed another multiple, so a restart picks
             # up the count from the hours rather than from a counter that could be lost.
             want = versions_owed(hours)
@@ -960,7 +1189,7 @@ if __name__ == "__main__":
                 except OSError:
                     pass
             for n in range(have + 1, want + 1):
-                freeze_version(n, model, it, hours, v, len(av))
+                freeze_version(n, model, it, hours, {k: x for k, x in v.items() if k != "ema"}, len(av))
             print(f"  it {it:8,}  lr {lr_at(it, hours):.3g}  "
                   f"q {v['q']:.4f}  mae {v['mae']:.4f}  "
                   f"policy {v['policy']:.4f}  top1 {v['top1']:.4f}"
@@ -973,9 +1202,16 @@ if __name__ == "__main__":
                   + (f"  fsq {v['fs_q']:.4f}/{v['fs_mae']:.4f}" if "fs_q" in v else "")
                   + (f"  dhq {v['dh_q']:.4f}/{v['dh_mae']:.4f}" if "dh_q" in v else "")
                   + (f"  stq {v['st_q']:.4f}/{v['st_mae']:.4f}" if "st_q" in v else "")
+                  + (f"  lzq {v['lz_q']:.4f}/{v['lz_mae']:.4f}" if "lz_q" in v else "")
                   + f"  value {v['value']:.4f}  "
                   f"{rate:.0f} pos/s  grad {gnorm:.2f}  "
                   f"av {len(av)/1e9:.2f}B  {hours:.2f}h", flush=True)
+            for k, e in v.get("ema", {}).items():
+                print(f"    ema {k}: q {e['q']:.4f}  policyL {e.get('policy_legal', e['policy']):.4f}"
+                      f"  top1L {e.get('top1_legal', e['top1']):.4f}"
+                      + (f"  lvq {e['lv_q']:.4f}" if "lv_q" in e else "")
+                      + (f"  dhq {e['dh_q']:.4f}" if "dh_q" in e else "")
+                      + (f"  lzq {e['lz_q']:.4f}" if "lz_q" in e else ""), flush=True)
             if el / 3600 > MAX_HOURS:
                 print("time cap reached", flush=True)
                 break
@@ -987,7 +1223,7 @@ if __name__ == "__main__":
                              "trained_hours": trained + (time.time() - t0) / 3600,
                              "att_since": att_since, "dist_since": dist_since,
                              "mlh_since": mlh_since, "yardstick": YARDSTICK,
-                             "data_seed": data_seed, "scaler": scaler_state()}, LAST)
+                             "data_seed": data_seed, "scaler": scaler_state(), "ema": ema_state()}, LAST)
             break
         # The resume point between validations. It only copies the weights off the GPU, so it costs
         # seconds. The heartbeat line below is cheap proof of life between validations.
@@ -996,12 +1232,13 @@ if __name__ == "__main__":
                          "hist": hist, "best": best,
                          "trained_hours": trained + (time.time() - t0) / 3600,
                          "att_since": att_since, "dist_since": dist_since, "mlh_since": mlh_since,
-                         "yardstick": YARDSTICK, "data_seed": data_seed, "scaler": scaler_state()}, LAST)
+                         "yardstick": YARDSTICK, "data_seed": data_seed, "scaler": scaler_state(),
+                         "ema": ema_state()}, LAST)
         if HEARTBEAT and it % HEARTBEAT == 0 and it != start:
             print(f"    {it:,}  {(it-start)*(AV_BSZ+POL_BSZ)/max(time.time()-t0,1):.0f} pos/s  "
                   f"grad {gnorm:.1f}  {trained + (time.time()-t0)/3600:.2f}h", flush=True)
         for g in opt.param_groups:
-            g["lr"] = lr_at(it, trained + (time.time() - t0) / 3600)
+            g["lr"] = LR_SCALE * lr_at(it, trained + (time.time() - t0) / 3600)
         if ATT:
             model.att_detach = (it - att_since) < ATT_DETACH
         if DIST:
@@ -1022,32 +1259,34 @@ if __name__ == "__main__":
                 playing = False
             if playing:
                 time.sleep(YIELD_MS / 1000.0)
-        loss, _ = step_batch(fwd, used, av, pol, dp=dp, mlh=mlh, lv=lv, fs=fs, dh=dh, st=st)
-        opt.zero_grad()
+        loss, _ = step_batch(fwd, used, av, pol, dp=dp, mlh=mlh, lv=lv, fs=fs, dh=dh, st=st, sv=sv,
+                             core=core, split=HEAD_SPLIT)
+        micro = (it - start) % ACCUM                # which of the ACCUM batches this is
+        if micro == 0:
+            opt.zero_grad()
+        if ACCUM > 1:
+            loss = loss / ACCUM
         if scaler is not None:
             scaler.scale(loss).backward()
-            scaler.unscale_(opt)                     # true gradients before the clip, so 1.0 still means 1.0
         else:
             loss.backward()
-        gn = float(torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0))
-        if not math.isfinite(gn) or gn > 50.0:
+        if micro != ACCUM - 1:
+            continue                                 # still adding up the step's batches
+        gn, ok = opt_step(model, opt, scaler, SYNC_FREE, muon)
+        if SYNC_FREE:
+            skipped_t += (~ok).long()
+            gnorm_t = torch.where(ok, 0.98 * gnorm_t + 0.02 * gn, gnorm_t)
+        elif not ok:
             skipped += 1
-            opt.zero_grad()
-            if scaler is not None:
-                scaler.update()                      # an overflow lowers the scale, without this it skips forever
             if skipped % 20 == 1:
                 print(f"  skipped a batch at it {it:,}, grad norm {gn:.1f} ({skipped} so far"
                       f"{f', loss scale {scaler.get_scale():g}' if scaler is not None else ''})", flush=True)
-            continue
-        gnorm = 0.98 * gnorm + 0.02 * gn
-        # The optimiser steps itself, never scaler.step(opt). The gradients are already unscaled and proved finite, and
-        # update() needs only the inf check unscale_ recorded. scaler.step would hand a fused optimiser found_inf, but a
-        # resumed run's older param groups come back as fused=None and step on the multi-tensor path, which asserts
-        # found_inf is None.
-        opt.step()
-        if scaler is not None:
-            scaler.update()
-        recentre_policy(model)
+        else:
+            gnorm = 0.98 * gnorm + 0.02 * gn
+            if ema:
+                with torch.no_grad():
+                    for k, w in ema.items():
+                        torch._foreach_lerp_(w, params, 1.0 - float(k))
 
     print(f"\nDONE {TAG}  best {best:.4f}  {(time.time()-t0)/3600:.2f}h", flush=True)
     av.close(); avv.close(); pol.close(); polv.close()

@@ -7,6 +7,7 @@
  "c2": 1.07,
  "c_puct": 1.75,
  "cache_clock": true,
+ "cache_evict": false,
  "cache_progress": true,
  "calibrate": false,
  "castle_prior": "king",

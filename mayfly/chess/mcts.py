@@ -365,7 +365,12 @@ SEARCH_KEYS = ("c_puct", "fpu", "vl", "policy_temp", "value_from_q",
                # With engine "cpp", run the network on chess/cudanet (a fingerprinted .cnw beside the
                # version) instead of the LibTorch trace. Not the same numbers (fp16 products), so
                # sealed off for v1 to v6.
-               "cuda_net")
+               "cuda_net",
+               # An evaluation cache that keeps admitting: two generations of half of cache_size instead
+               # of a cache that stops taking entries when it is full. The same search until the cache
+               # would have filled, then fewer forward passes a visit, so it changes moves only after
+               # that. The C++ tree only (engine "cpp"). Off by default, sealed off for v1 to v6.
+               "cache_evict")
 
 class _Cut:
     """A policy row already cut to one node's legal moves on the GPU (sw25_one_copy).
@@ -489,6 +494,7 @@ def default_search():
 # with the true result instead of a value head guess. One handle for the whole process, behind a
 # lock, because python-chess's reader is not documented as thread safe and the board runs a search
 # per player. Probes are cached, since an endgame probes the same positions many times a search.
+# Several folders may be given, split by os.pathsep.
 TB_PATH = E("SYZYGY_DIR", paths.under("syzygy"))
 TB_PIECES = int(E("TB_PIECES", 6))
 _TB = None
@@ -510,7 +516,12 @@ def tablebase():
         if not _TB_TRIED:
             try:
                 import chess.syzygy
-                _TB = chess.syzygy.open_tablebase(TB_PATH)
+                dirs = [d for d in TB_PATH.split(os.pathsep) if d]
+                if not dirs:
+                    raise FileNotFoundError("no tablebase folder is set")
+                _TB = chess.syzygy.open_tablebase(dirs[0])
+                for d in dirs[1:]:
+                    _TB.add_directory(d)
                 # stderr, never stdout. The tables open lazily inside a search, and under uci.py
                 # stdout is the UCI protocol.
                 print(f"[mcts] syzygy open at {TB_PATH}, exact play under {TB_PIECES+1} pieces",
@@ -523,6 +534,22 @@ def tablebase():
             # open, not the None _TB holds while they are being opened.
             _TB_TRIED = True
     return _TB
+
+
+def set_tablebase_path(path):
+    """Point the shared reader at other folders (uci.py's SyzygyPath option). Called between searches.
+    The tables open again on next use, and the C++ tree reads them through this too."""
+    global TB_PATH, _TB, _TB_TRIED
+    with _TB_LOCK:
+        if _TB is not None:
+            try:
+                _TB.close()
+            except Exception:
+                pass
+        TB_PATH = path or ""
+        _TB, _TB_TRIED = None, False
+        _TB_CACHE.clear()
+        _DTZ_CACHE.clear()
 
 
 class Node:
@@ -842,6 +869,9 @@ class MCTS:
         # <version>.cnw when its fingerprint matches this network). Off by default, sealed off for
         # v1 to v6.
         self.cuda_net = E("CUDA_NET", "0") == "1"
+        # cache_evict, see SEARCH_KEYS and cpp/search2.h (Settings::cache_evict). The C++ tree only. The
+        # Python search warns once and keeps its cache as it is. Off.
+        self.cache_evict = E("CACHE_EVICT", "0") == "1"
         self._cpp = None
         self._cpp_cfg = None
         self._cpp_live = False
@@ -2358,6 +2388,9 @@ class MCTS:
                                            max_nodes, crit_seconds)
             mcts_cpp._warn(f"engine cpp: this search runs in Python ({why})")
             self._cpp_live = False
+        if self.cache_evict:
+            import mcts_cpp
+            mcts_cpp._warn("cache_evict runs on the C++ tree only: this Python search keeps a cache that stops when full")
         # stop() sets the abort flag to end a ponder, so a new search clears it, or it would do no
         # visits and play root.moves[0]. ponder() passes clear_abort=False, so a background search
         # never clears a stop the foreground has asked for.

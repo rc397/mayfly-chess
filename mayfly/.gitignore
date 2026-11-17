@@ -81,3 +81,6 @@ env/
 *.swp
 .DS_Store
 Thumbs.db
+
+# make_release.py writes its archive here, and it carries a network
+chess/release/

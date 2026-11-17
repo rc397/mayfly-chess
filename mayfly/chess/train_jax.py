@@ -22,12 +22,14 @@ train_xla.py writes (xla_started, xla_heartbeat, xla_summary.json).
   iterations  a step is chips x XLA_BATCH_X GPU batches and adds that many to `it`, as in train_xla.py. Trained
               hours advance by samples over RIG_POS_PER_HOUR.
   saves       at step XLA_PROOF_STEP, every XLA_SAVE_MIN minutes and at the end. XLA_COOL_MIN cools a copy at the
-              end (train_av's cool_factor), written as ckpt_cooled_last.pt.
+              end (train_av's cool_factor), written as ckpt_cooled_last.pt. Every XLA_VAL_MIN minutes the weights
+              alone go into val_pts/, to be validated on a GPU machine (val_point.py).
 
   python chess/train_jax.py
   env: train_av's (CKPT_DIR, SHARDS, TAG, AV_BSZ, POL_BSZ, the shares, heads and weights), XLA_SECONDS, XLA_SAVE_MIN=30,
        XLA_PROOF_STEP=40, XLA_COOL_MIN=0, XLA_LR_SCALE=, XLA_BATCH_X=1, XLA_LOG_EVERY=200, XLA_MIN_SPS=500,
-       XLA_MAX_STEPS=0, XLA_DTYPE=bfloat16, RIG_POS_PER_HOUR=972000, LOADERS (worker processes), DATA_SEED
+       XLA_MAX_STEPS=0, XLA_DTYPE=bfloat16, RIG_POS_PER_HOUR=972000, LOADERS (worker processes), DATA_SEED,
+       XLA_VAL_MIN=30 (0 for none)
 """
 import json
 import math
@@ -61,13 +63,20 @@ def slices(total_av, total_pol):
 
 
 def make_loaders(seed, sizes):
-    """train_av's loaders at this session's slice sizes, as train_xla.py builds them for one replica."""
+    """train_av's loaders at this session's slice sizes, as train_xla.py builds them for one replica.
+
+    Each worker's pools get a different size. Every loader refills its shuffle pool from disk when it runs out, and
+    with every worker started together at the same pool size they all refilled at once. On Kaggle's dataset disk the
+    steps then waited 50 to 100 ms for data every minute or so (about 11,000 samples a second against the chips'
+    11,900). Pools of 0.75 to 1.25 times the default, drawn from the worker's seed, keep the refills apart."""
     import train_av as T
     from data_av import AVLoader
     from data_packed import PackedLoader
     S = T.SHARDS
     av_n, dp_n, lv_n, dh_n, pol_n, mlh_n = sizes
-    mk = lambda **kw: AVLoader(S, split="train", device="cpu", refresh=0, **kw)  # noqa: E731
+    jitter = np.random.default_rng(seed + 99)
+    pool = lambda: int(16_000 * jitter.uniform(0.75, 1.25))  # noqa: E731
+    mk = lambda **kw: AVLoader(S, split="train", device="cpu", refresh=0, pool_size=pool(), **kw)  # noqa: E731
     avs = [mk(batch=av_n, seed=seed)]
     if dp_n:
         avs.append(mk(batch=dp_n, seed=seed + 2, prefix="dp", thin=T.DP_THIN, down_keys=T.DP_DOWN_KEYS or None,
@@ -77,10 +86,10 @@ def make_loaders(seed, sizes):
     if dh_n:
         avs.append(mk(batch=dh_n, seed=seed + 6, prefix="dh", thin=T.DH_THIN))
     pols = [PackedLoader(S, batch=pol_n, split="train", device="cpu", seed=seed + 3, sources=T.SOURCES, refresh=0,
-                         legal=T.MASK_LEGAL, mleft=T.MLH)]
+                         legal=T.MASK_LEGAL, mleft=T.MLH, pool_size=pool())]
     if mlh_n:
         pols.append(PackedLoader(S, batch=mlh_n, split="train", device="cpu", seed=seed + 5, sources=("lz",),
-                                 refresh=0, legal=T.MASK_LEGAL, mleft=True, need_flag=8))
+                                 refresh=0, legal=T.MASK_LEGAL, mleft=True, need_flag=8, pool_size=pool()))
     p_keys = P_KEYS + (("legal",) if T.MASK_LEGAL else ()) + (("mleft", "mlv") if T.MLH else ())
     return avs, pols, p_keys
 
@@ -97,6 +106,8 @@ def next_batch(avs, pols, p_keys):
 
 def loader_worker(seed, sizes, out_q, stop):
     """One worker process, putting whole batches onto out_q until told to stop."""
+    import torch
+    torch.set_num_threads(int(E("LOADER_THREADS", 1)))     # sixteen workers each with a thread a core crowd out
     avs, pols, p_keys = make_loaders(seed, sizes)
     while not stop.is_set():
         batch = next_batch(avs, pols, p_keys)
@@ -414,11 +425,13 @@ def run():
     if sizes[0] % 1 or av_tot % nd or pol_tot % nd:
         raise SystemExit(f"a step's {av_tot} + {pol_tot} rows do not split over {nd} chips")
     data_seed = int(E("DATA_SEED") or int.from_bytes(os.urandom(4), "little"))
-    # one worker makes about 2,800 samples a second and they add up, so eight cover the chips' 12,000 with room,
-    # within the CPUs the container really has and leaving the trainer its own
-    nw = int(E("LOADERS") or max(2, min(8, cpus() // 4)))
+    # One worker makes about 2,800 samples a second and they add up. Eight were enough on average but not
+    # through their pool refills, when a session waited for data every minute or so. So sixteen within the
+    # container's CPUs (48 on Kaggle's TPU host), each on one torch thread, and a queue of four batches a worker
+    # (about five seconds of training) to ride out a refill.
+    nw = int(E("LOADERS") or max(2, min(16, cpus() // 3)))
     ctx = mp.get_context("spawn")
-    q = ctx.Queue(maxsize=max(4, 2 * nw))
+    q = ctx.Queue(maxsize=max(8, 4 * nw))
     stop = ctx.Event()
     workers = [ctx.Process(target=loader_worker, args=(data_seed + 1000 * w, sizes, q, stop), daemon=True)
                for w in range(nw)]
@@ -490,20 +503,64 @@ def run():
         torch.save(obj, path + ".part")
         os.replace(path + ".part", path)
 
+    # A point on the curve every XLA_VAL_MIN minutes: the weights alone, about a third of a full save, into
+    # val_pts/. A GPU machine runs val_point.py on each once the session's output is home.
+    val_dir = os.path.join(T.CKPT_DIR, "val_pts")
+
+    def snapshot():
+        p = jax.device_get(state["p"])
+        model_sd = {k: torch.from_numpy(np.asarray(p[k], np.float32).copy()) if k in p else v
+                    for k, v in ck["model"].items()}
+        os.makedirs(val_dir, exist_ok=True)
+        path = os.path.join(val_dir, f"ckpt_it{it - 1}.pt")
+        torch.save({"model": model_sd, "iter": it - 1, "trained_hours": trained + samples / rig_sph}, path + ".part")
+        os.replace(path + ".part", path)
+
     def put(b):
         return jax.device_put(to_chips(b, nd), dat)
+
+    # The next batches already on the chips. A thread takes each batch off the queue (unpickling about
+    # 11 MB), lays it out for the chips and copies it to them while the current step runs, so the step loop only
+    # picks up a batch that is there. Its errors (every loader dead) come back to the loop.
+    import queue as _queue
+    import threading
+    ready = _queue.Queue(maxsize=int(E("PREFETCH", 3)))
+    feed_err = []
+
+    def feed():
+        try:
+            while True:
+                ready.put(put(get_batch(q, workers)))
+        except BaseException as ex:  # noqa: BLE001
+            feed_err.append(ex)
+            ready.put(None)
+
+    threading.Thread(target=feed, daemon=True).start()
+
+    def next_ready():
+        b = ready.get()
+        if b is None:
+            raise feed_err[0]
+        return b
+
+    def depth():
+        try:
+            return f"queue {q.qsize()}/{q._maxsize}, ready {ready.qsize()}"
+        except (NotImplementedError, AttributeError):
+            return f"ready {ready.qsize()}"
 
     phase, k, el, last_save_el, saved_k = "main", 0, 0.0, 0.0, -1
     k_r0 = el_r0 = None
     log_every = int(E("XLA_LOG_EVERY", 200))
     save_every = float(E("XLA_SAVE_MIN", 30)) * 60
+    val_every, last_val_el = float(E("XLA_VAL_MIN", 30)) * 60, 0.0
     proof_at = int(E("XLA_PROOF_STEP", 40))
     min_sps, paced, slow = float(E("XLA_MIN_SPS", 500)), False, None
     max_steps = int(E("XLA_MAX_STEPS", 0))
     t0 = last_log = time.time()
     last_beat, wait_s, host_s = 0.0, 0.0, 0.0
     tot = {"wait": 0.0, "host": 0.0, "steps": 0}
-    nxt = put(get_batch(q, workers))
+    nxt = next_ready()
     m = None
     while True:
         if max_steps and k >= max_steps:
@@ -518,7 +575,7 @@ def run():
         X = nxt
         state, m = jstep(state, X, lr, flags)       # dispatched, the chips run it while the next batch comes in
         tb = time.time()
-        nxt = put(get_batch(q, workers))
+        nxt = next_ready()
         tc = time.time()
         host_s, wait_s = host_s + (tb - ta), wait_s + (tc - tb)
         it += step_it
@@ -542,7 +599,7 @@ def run():
             say(f"  it {it:,}  loss {float(mh['loss']):.4f}  q {float(mh['q']):.4f}  policy {float(mh['policy']):.4f}  "
                 f"grad {gnorm:.2f}  lr {float(lr):.3g}  {log_every * step_it * per / (now - last_log):,.0f} samples/s  "
                 f"{samples / rig_sph:.1f} GPU-trainer hours this session  (a step: {1000 * host_s / log_every:.0f} ms to "
-                f"dispatch, {1000 * wait_s / log_every:.0f} ms waiting for data"
+                f"dispatch, {1000 * wait_s / log_every:.0f} ms waiting for data; {depth()}"
                 + (f"; {skipped} skipped" if skipped else "") + ")")
             last_log, host_s, wait_s = now, 0.0, 0.0
         if k % 25 == 0:
@@ -565,6 +622,10 @@ def run():
                 save()
                 saved_k, last_save_el = k, el
                 say(f"  saved at it {it - 1:,}")
+            if phase == "main" and val_every and el - last_val_el >= val_every:
+                snapshot()
+                last_val_el = el
+                say(f"  weights for the curve saved at it {it - 1:,}")
             if not paced and el_r0 is not None and phase == "main" and min_sps and el - el_r0 > 1800:
                 paced = True
                 sps = (k - k_r0) * step_it * per / (el - el_r0)

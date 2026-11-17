@@ -41,7 +41,7 @@ class AVLoader:
 
     def __init__(self, shard_dir, batch=128, split="train", device="cuda", holdout=64,
                  seed=0, refresh=600, prefix="av", depth=6, pick=16, block=1024,
-                 pool_size=16_000, val_size=50_000, thin=1, down_keys=None, down_weight=1.0):
+                 pool_size=16_000, val_size=50_000, thin=1, down_keys=None, down_weight=1.0, pin=False):
         self.shard_dir, self.refresh, self.prefix = shard_dir, refresh, prefix
         # down_keys is a sorted .npy of board_hash_av values. A training row whose position is in it
         # is kept with probability down_weight, so those positions train less often, for example
@@ -61,6 +61,12 @@ class AVLoader:
         self.thin = max(1, int(thin))
         self.pool, self.pos = None, 0
         self.device = device
+        # pin sends each batch in one pinned copy on a stream of its own (loader_fast.py). Off, one pageable
+        # copy an array as before.
+        self.ship = None
+        if pin and torch.device(device).type == "cuda":
+            from loader_fast import Shipper
+            self.ship = Shipper(device)
         self.rng = np.random.default_rng(seed)
         self.paths = self._list()
         if not self.paths:
@@ -207,10 +213,12 @@ class AVLoader:
                         print(f"[av loader] corpus grew by {self.total - before:,} to "
                               f"{self.total:,}", flush=True)
                 ids, cast, mv, q, hm, ep = batch_tensors_av(self._draw())
-                t = lambda a, d: torch.as_tensor(a).to(self.device, dtype=d, non_blocking=True)
-                item = (t(ids, torch.long), t(cast, torch.float32),
-                        t(hm, torch.long), t(ep, torch.long),
-                        t(mv, torch.long), t(q, torch.float32))
+                arrs = [(ids, torch.long), (cast, torch.float32), (hm, torch.long), (ep, torch.long),
+                        (mv, torch.long), (q, torch.float32)]
+                if self.ship is not None:
+                    item = self.ship.send(arrs)
+                else:
+                    item = tuple(torch.as_tensor(a).to(self.device, dtype=d, non_blocking=True) for a, d in arrs)
                 # a full queue waits with the batch in hand rather than drawing past it
                 while not self.stop.is_set():
                     try:
@@ -235,7 +243,8 @@ class AVLoader:
         """The next batch. If the filler has given up, this raises what stopped it instead of waiting."""
         while True:
             try:
-                return self.q.get(timeout=self.POLL)
+                item = self.q.get(timeout=self.POLL)
+                return self.ship.receive(item) if self.ship is not None else item
             except queue.Empty:
                 if self.error is not None:
                     raise RuntimeError("the action-value loader gave up") from self.error

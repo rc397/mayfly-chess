@@ -5,7 +5,7 @@ axis is hours of training, which is what version freezes are scheduled against. 
 axis, and version freezes and other events are marked across all of them.
 
     python chess/curve.py            writes curve_mayfly.png
-    env TAG=mayfly, OUT=curve_mayfly.png, XMAX (hours, blank for all)
+    env TAG=mayfly, OUT=curve_mayfly.png, X_AXIS=steps or hours, XMAX (in the axis's unit, blank for all)
 """
 import os, sys, json
 import matplotlib
@@ -45,7 +45,7 @@ if not h:
 def _segments(rows):
     segs, prev_t = [], -1.0
     for r in rows:
-        if not segs or r["t"] < prev_t:
+        if not segs or r["t"] < prev_t or "hours" in r:     # a point measured elsewhere starts its own run
             segs.append([])
         segs[-1].append(r)
         prev_t = r["t"]
@@ -75,7 +75,11 @@ def _hours_at(seg, it, pace):
 hours, acc = [], 0.0
 _segs = _segments(h)
 for k, seg in enumerate(_segs):
-    if k:
+    if "hours" in seg[0]:
+        # A TPU session's checkpoint, validated by val_point.py. It carries its own trained hours, since the
+        # TPU's training never appears in the GPU trainer's own validations.
+        acc = seg[0]["hours"] - seg[0]["t"] / 3600
+    elif k:
         before = _segs[k - 1]
         p_old = _pace(before) or _pace(seg)
         p_new = _pace(seg) or p_old
@@ -86,17 +90,53 @@ for k, seg in enumerate(_segs):
             acc += before[-1]["t"] / 3600
     hours += [acc + r["t"] / 3600 for r in seg]
 
+# The axis is training steps. Hours were hours of one GPU trainer, so a TPU session's 8.5 hours came out as about
+# 350 hours carrying five points, and the axis read 1,380 hours on a run six weeks old. A step is 128 positions on
+# every machine, the TPU's included, so each stretch takes the width of the training it did. X_AXIS=hours draws
+# the old axis. `hours` below is the axis position in either case. Things stamped in hours (events, the old
+# version marks) are mapped onto it.
+X_AXIS = E("X_AXIS", "steps")
+_h_it = sorted(zip(hours, [r["it"] for r in h]))
+
+
+def x_of_hours(hh):
+    """A time in the run's hours as a position on the axis."""
+    if X_AXIS != "steps":
+        return hh
+    hs, its = [a for a, _ in _h_it], [b for _, b in _h_it]
+    if hh <= hs[0]:
+        return its[0] / 1e6
+    if hh >= hs[-1]:
+        return its[-1] / 1e6
+    j = next(j for j in range(1, len(hs)) if hs[j] >= hh)
+    f = (hh - hs[j - 1]) / max(hs[j] - hs[j - 1], 1e-9)
+    return (its[j - 1] + f * (its[j] - its[j - 1])) / 1e6
+
+
+def x_of_iter(it):
+    return it / 1e6 if X_AXIS == "steps" else None
+
+
+if X_AXIS == "steps":
+    hours = [r["it"] / 1e6 for r in h]
+
 def smooth(v, w=9):
     """Centred rolling mean, shrinking the window at the ends rather than dropping them.
 
     Every top-1 point is one validation batch of 320, with a standard error of about 2.4 points,
     so the trend is hard to see without smoothing.
     """
-    out = []
-    for i in range(len(v)):
-        a, b = max(0, i - w // 2), min(len(v), i + w // 2 + 1)
-        out.append(sum(v[a:b]) / (b - a))
-    return out
+    out, run = [], []
+    for x in list(v) + [float("nan")]:          # each run between gaps is smoothed on its own
+        if x == x:
+            run.append(x)
+            continue
+        for i in range(len(run)):
+            a, b = max(0, i - w // 2), min(len(run), i + w // 2 + 1)
+            out.append(sum(run[a:b]) / (b - a))
+        out.append(x)
+        run = []
+    return out[:-1]
 
 
 q = [r["q"] for r in h]
@@ -113,10 +153,30 @@ fig, (ax, axt, axs, axq, axm) = plt.subplots(
     gridspec_kw={"height_ratios": [3.0, 1.9, 1.7, 1.3, 1.5], "hspace": 0.12})
 
 
+# No line across a gap. A TPU session validates only its snapshots, one every 30 minutes of its time, which is
+# far apart on this axis, and joining them drew long straight lines that read like measurements. Lines break
+# wherever two points are more than GAP_H apart, and every point measured off the trainer (a snapshot, scored by
+# val_point.py) is drawn as a dot.
+GAP_H = float(E("GAP_H", 0.15 if X_AXIS == "steps" else 12.0))      # 150,000 steps: the trainers validate every 10,000
+
+
 def points(key, scale=1.0):
-    xs = [hours[i] for i, r in enumerate(h) if key in r]
-    ys = [scale * r[key] for r in h if key in r]
+    xs, ys = [], []
+    for i, r in enumerate(h):
+        if key not in r:
+            continue
+        if xs and hours[i] - xs[-1] > GAP_H:
+            xs.append(float("nan"))
+            ys.append(float("nan"))
+        xs.append(hours[i])
+        ys.append(scale * r[key])
     return xs, ys
+
+
+def dots(key, scale=1.0):
+    """The points measured off the trainer (TPU snapshots and checkpoints), which carry their own hours."""
+    return ([hours[i] for i, r in enumerate(h) if key in r and "hours" in r],
+            [scale * r[key] for r in h if key in r and "hours" in r])
 
 
 # the losses
@@ -135,6 +195,7 @@ for key, colour, label in (("policy_legal", "#1f4e79", "policy (legal moves)"),
     xs, ys = points(key)
     if xs:
         l, = ax.plot(xs, ys, color=colour, lw=1.8, label=label)
+        ax.plot(*dots(key), ls="", marker="o", ms=3.2, color=colour)
         keep.append(l)
 # dh_q is the action-value loss on held-out Kaggle deep labels (top ten moves at depth 35), logged from
 # the first evaluation after DH_SHARE went on. A dotted line in every panel marks the switch.
@@ -167,6 +228,7 @@ for key, colour, label in (("top1_legal", "#2f6b1d", "top-1 (legal moves)"),
     if xs:
         ys = smooth(ys, 5)
         l, = axt.plot(xs, ys, color=colour, lw=2.1, label=label)
+        axt.plot(*dots(key, 100.0), ls="", marker="o", ms=3.2, color=colour)
         keep.append(l)
         last = (xs[-1], ys[-1], colour)
 if last:
@@ -188,17 +250,21 @@ try:
 except (OSError, ValueError):
     t3 = {}
 _marks = False
+_t3x = []
 for name, r in t3.items():
     if "top3_legal" not in r:
         continue
     # the live checkpoint does not carry its hours, so it goes at the newest point on the curve
-    x = float(hours[-1]) if (name == "live" or not r.get("hours")) else float(r["hours"])
+    x = (float(hours[-1]) if (name == "live" or not (r.get("hours") or r.get("iter"))) else
+         x_of_iter(r["iter"]) if (X_AXIS == "steps" and r.get("iter")) else x_of_hours(float(r["hours"])))
     axt.plot([x], [100 * r["top3_legal"]], marker="s", ms=6, mfc="white", mec="#2f6b1d", mew=1.6, ls="")
     axt.plot([x], [100 * r["top1_legal"]], marker="o", ms=5, color="#2f6b1d", ls="")
     if "att_top3_legal" in r:
         axt.plot([x], [100 * r["att_top3_legal"]], marker="s", ms=6, mfc="white", mec="#b86e00", mew=1.6, ls="")
-    axt.annotate(f"{name} top-3 {100 * r['top3_legal']:.0f}%", (x, 100 * r["top3_legal"]),
-                 textcoords="offset points", xytext=(4, 5), fontsize=7, color="#2f6b1d")
+    if all(abs(x - x0) > 0.03 * max(hours) for x0 in _t3x):     # no label on top of a neighbour's
+        axt.annotate(f"{name} top-3 {100 * r['top3_legal']:.0f}%", (x, 100 * r["top3_legal"]),
+                     textcoords="offset points", xytext=(4, 5), fontsize=7, color="#2f6b1d")
+        _t3x.append(x)
     _t3.append(100 * r["top3_legal"])
     _marks = True
 if _marks:
@@ -220,6 +286,7 @@ for key, colour, label in (("mae", "#c0504d", "action value, one number"),
     xs, ys = points(key)
     if xs:
         l, = axm.plot(xs, ys, color=colour, lw=1.7, label=label)
+        axm.plot(*dots(key), ls="", marker="o", ms=3.0, color=colour)
         keep.append(l)
 axm.set_ylabel("win-probability error")
 # the moves-left head's mean error in plies on held-out Leela positions, on a second axis
@@ -230,7 +297,7 @@ if xs:
     axl.set_ylabel("moves-left error (plies)", color="#2a7f8f")
     axl.tick_params(axis="y", colors="#2a7f8f")
     keep.append(l)
-axm.set_xlabel("hours of training")
+axm.set_xlabel("training steps (millions; 128 positions a step)" if X_AXIS == "steps" else "hours of training")
 axm.grid(True, alpha=0.16)
 if keep:
     axm.legend(handles=keep, loc="upper right", fontsize=8, framealpha=0.92)
@@ -262,6 +329,8 @@ def hours_at_iter(it):
 
 def sp_x(r):
     # versions sit on their own vertical marks, everything else is placed by iteration
+    if X_AXIS == "steps":
+        return r["iter"] / 1e6
     if r["label"][1:].isdigit() and r.get("hours"):
         return float(r["hours"])
     return hours_at_iter(r["iter"])
@@ -290,8 +359,12 @@ if sp_rows:
         if gc:
             axs2.plot([sp_x(r) for r in gc], [100 * r["games"][nodes]["score"] for r in gc], ls="", marker="o",
                       mfc="white", color="#c06c84", ms=4)
-    for r in sp_rows:
+    _spx = []
+    for r in sorted(sp_rows, key=lambda r: -sp_x(r)):          # newest first, so the latest "live" keeps its label
         if r.get("puzzles") and not r["puzzles"].get("bound") and (r["label"][1:].isdigit() or r["label"] == "live"):
+            if any(abs(sp_x(r) - x0) < 0.03 * max(hours) for x0 in _spx):
+                continue
+            _spx.append(sp_x(r))
             axs.annotate(r["label"] + (" cooled" if r.get("cooled") else ""), (sp_x(r), r["puzzles"]["rating"]),
                          textcoords="offset points", xytext=(4, -10), fontsize=7, color="#355c7d")
     axs.legend(handles=handles, loc="upper left", fontsize=7, framealpha=0.92)
@@ -337,21 +410,31 @@ except Exception:
 mi = [i for i, r in enumerate(h) if "policy_legal" in r]
 ai = [i for i, r in enumerate(h) if "att_policy_legal" in r]
 di = [i for i, r in enumerate(h) if "qdist" in r]
-marks = [(v["hours"], f"v{v['version']}", "#777", ":") for v in vs]
+marks = [((x_of_iter(v["iter"]) if X_AXIS == "steps" and v.get("iter") else x_of_hours(v["hours"])),
+          f"v{v['version']}", "#777", ":") for v in vs]
 if mi:
     marks.append((hours[mi[0]], "v4 recipe", "#b0413e", "--"))
 if ai:
     marks.append((hours[ai[0]], "attention heads", "#d98b1f", "-."))
 if di:
     marks.append((hours[di[0]], "distributional heads", "#7a4fa3", "-."))
-marks += [(ev["h"], ev["label"].split(",")[0], "#7a4fa3", "--") for ev in events]
-# labels take turns at three heights so close marks do not overprint, and long labels are cut
-for k, (x, label, colour, style) in enumerate(sorted(marks)):
+marks += [(x_of_hours(ev["h"]), ev["label"].split(",")[0], "#7a4fa3", "--") for ev in events]
+# Every mark keeps its line. Marks closer than 4% of the axis share one label, joined by " / ", and the labels
+# take turns at three heights.
+groups = []
+for x, label, colour, style in sorted(marks):
     for a in (ax, axt, axs, axq, axm):
         a.axvline(x, color=colour, lw=1.0, ls=style, alpha=0.65)
-    ax.annotate(label[:26], (x, (0.97, 0.66, 0.36)[k % 3]), xycoords=("data", "axes fraction"),
-                rotation=90, textcoords="offset points", xytext=(3, 0), fontsize=7.2,
-                color=colour, ha="left", va="top")
+    if groups and x - groups[-1][0] < 0.04 * max(hours):
+        groups[-1][1].append(" ".join(label.split())[:18])
+    else:
+        groups.append([x, [" ".join(label.split())[:18]], colour])
+for k, (x, labels, colour) in enumerate(groups):
+    # a shared label starts at the top, the only height with room for it
+    ax.annotate(" / ".join(labels)[:52], (x, 0.97 if len(labels) > 1 else (0.97, 0.66, 0.36)[k % 3]),
+                xycoords=("data", "axes fraction"),
+                rotation=90, textcoords="offset points", xytext=(3, 0), fontsize=7.0,
+                color=colour if len(labels) == 1 else "#555", ha="left", va="top")
 
 # the version numbers as one small table where the top-1 panel is empty, rather than three boxes
 # scattered across the curves
@@ -365,10 +448,14 @@ if vs:
     def _top1(v):
         return v.get("top1_legal", v.get("top1", 0))
 
-    rows = chr(10).join(f"v{v['version']:<2} {v.get('hours', 0):>4.0f}h  "
-                        f"policy {_pol(v):6.3f}  action {v.get('q', 0):.3f}  "
-                        f"top-1 {100*_top1(v):4.1f}%" + ("  legal" if "top1_legal" in v else "")
-                        for v in sorted(vs, key=lambda r: r.get("version", 0)))
+    def _row(v):
+        head = f"v{v['version']:<2} {v.get('iter', 0) / 1e6:>5.2f}M  "
+        if not _pol(v):                  # a point release cooled from a candidate (v6.1) has no validation of its own
+            return head + "not validated at release (cooled copy)"
+        return (head + f"policy {_pol(v):6.3f}  action {v.get('q', 0):.3f}  "
+                f"top-1 {100*_top1(v):4.1f}%" + ("  legal" if "top1_legal" in v else ""))
+
+    rows = chr(10).join(_row(v) for v in sorted(vs, key=lambda r: r.get("version", 0)))
     axt.text(0.012, 0.96, rows, transform=axt.transAxes, va="top", ha="left", fontsize=7.2,
              family="monospace", color="#333",
              bbox=dict(boxstyle="round,pad=0.4", fc="#ffffff", ec="#ccc", alpha=0.93))
@@ -383,7 +470,17 @@ else:
     ttl = f"policy {pol[-1]:.4f}, action value {q[-1]:.4f}, top-1 {top1[-1]:.1f}%"
 if ai:
     ttl += f"  |  attention: policy {h[-1]['att_policy_legal']:.4f}, top-1 {100*h[-1]['att_top1_legal']:.1f}%"
-ax.set_title(f"MayFly {TAG}: {hours[-1]:.1f}h, {h[-1]['it']:,} steps, " + ttl, fontsize=10)
+# The stretches trained on Kaggle's TPUs, shaded in every panel. No validation runs there, only the snapshot checks.
+for k in range(1, len(hours)):
+    if hours[k] - hours[k - 1] > GAP_H:
+        for a in (ax, axt, axs, axq, axm):
+            a.axvspan(hours[k - 1], hours[k], color="#8a96a3", alpha=0.10, lw=0, zorder=0)
+_spans = [(hours[k] - hours[k - 1], k) for k in range(1, len(hours)) if hours[k] - hours[k - 1] > GAP_H]
+if _spans:
+    _w, _k = max(_spans)
+    ax.text((hours[_k - 1] + hours[_k]) / 2, 0.30, "shaded: trained on TPU," + chr(10) + "checked at snapshots",
+            transform=ax.get_xaxis_transform(), ha="center", va="center", fontsize=7.5, color="#4a5560")
+ax.set_title(f"MayFly {TAG}: {h[-1]['it']:,} steps, " + ttl, fontsize=10)
 fig.tight_layout()
 fig.savefig(OUT, dpi=130)
 print(f"wrote {OUT}")

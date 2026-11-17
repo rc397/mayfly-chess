@@ -1384,16 +1384,16 @@ def unit_every_sealed_version_pins_every_setting():
         print("  sealed versions: no versions.json here, manifest part skipped", flush=True)
         return
     for r in rows:
-        n = int(r["version"])
+        n = r["version"]                    # 5, or a point release such as 5.1
         blk = r.get("search")
         assert blk, f"v{n} has NO sealed search: it plays whatever today's defaults are"
         missing = set(SEARCH_KEYS) - set(blk)
         assert not missing, f"v{n} is sealed without {sorted(missing)}: those leak from today"
         assert pinned_search(r["file"]) == blk, f"v{n}'s pinned search is not its sealed block"
-    v1 = next((r for r in rows if int(r["version"]) == 1), None)
+    v1 = next((r for r in rows if r["version"] == 1), None)
     if v1 is not None:
         assert v1["search"]["vl"] == 1.0, "v1 predates the virtual-loss change and must keep vl=1.0"
-    print(f"  sealed versions: {', '.join('v%d' % int(r['version']) for r in rows)} all frozen, "
+    print(f"  sealed versions: {', '.join('v%s' % r['version'] for r in rows)} all frozen, "
           f"all {len(SEARCH_KEYS)} settings pinned", flush=True)
 
 

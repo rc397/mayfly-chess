@@ -35,7 +35,7 @@ class PackedLoader:
     def __init__(self, shard_dir, batch=128, split="train", device="cuda", holdout=64,
                  seed=0, depth=6, temp=100.0, refresh=300, sources=None,
                  pick=16, block=1024, pool_size=16_000, val_size=50_000, legal=False,
-                 val_cache=None, mleft=False, need_flag=0, min_mtime=None):
+                 val_cache=None, mleft=False, need_flag=0, min_mtime=None, pin=False, legal_worker=False):
         # A memmap fixes the file length when opened, so shards are reopened every `refresh` seconds
         # to pick up records still being written. Zero disables it for a finished corpus. `sources`
         # picks which teachers (shard prefixes) to mix.
@@ -56,6 +56,15 @@ class PackedLoader:
         self.legal = legal
         self.pool, self.pos = None, 0
         self.device = device
+        # loader_fast.py: the mask in a process of its own, and one pinned copy a batch on its own stream. Off,
+        # the filler thread does both itself. On, the batches are the same bytes.
+        self.mask_fn, self.ship = None, None
+        if legal and legal_worker:
+            from loader_fast import LegalWorker
+            self.mask_fn = LegalWorker(",".join(sources or ()) or split)
+        if pin and torch.device(device).type == "cuda":
+            from loader_fast import Shipper
+            self.ship = Shipper(device)
         self.rng = np.random.default_rng(seed)
         self.want_val = split == "val"
         # The validation set is saved to val_cache the first time and read back after, so a restart
@@ -217,17 +226,19 @@ class PackedLoader:
                     if self.total > before:
                         print(f"[loader] corpus grew by {self.total - before:,} to "
                               f"{self.total:,}", flush=True)
-                b = batch_tensors(self._draw(), N_MOVES, self.temp, self.legal)
-                t = lambda a, d: torch.as_tensor(a).to(self.device, dtype=d, non_blocking=True)
-                item = ((t(b["ids"], torch.long), t(b["cast"], torch.float),
-                            t(b["hm"], torch.long), t(b["ep"], torch.long),
-                            t(b["policy"], torch.float), t(b["value"], torch.float),
-                            t(b["material"], torch.float), t(b["king"], torch.float),
-                            t(b["pawns"], torch.float), t(b["mob"], torch.float),
-                            t(b["bishop"], torch.float), t(b["aux"], torch.float))
-                           + ((t(b["legal"], torch.bool),) if self.legal else ())
-                           + ((t(b["mleft"], torch.float), t(b["mlv"], torch.float))
-                              if self.mleft else ()))
+                b = batch_tensors(self._draw(), N_MOVES, self.temp, self.legal, self.mask_fn)
+                arrs = ([(b["ids"], torch.long), (b["cast"], torch.float),
+                         (b["hm"], torch.long), (b["ep"], torch.long),
+                         (b["policy"], torch.float), (b["value"], torch.float),
+                         (b["material"], torch.float), (b["king"], torch.float),
+                         (b["pawns"], torch.float), (b["mob"], torch.float),
+                         (b["bishop"], torch.float), (b["aux"], torch.float)]
+                        + ([(b["legal"], torch.bool)] if self.legal else [])
+                        + ([(b["mleft"], torch.float), (b["mlv"], torch.float)] if self.mleft else []))
+                if self.ship is not None:
+                    item = self.ship.send(arrs)
+                else:
+                    item = tuple(torch.as_tensor(a).to(self.device, dtype=d, non_blocking=True) for a, d in arrs)
                 # a full queue waits with the batch in hand, so DATA_SEED replays the same stream
                 while not self.stop.is_set():
                     try:
@@ -247,7 +258,8 @@ class PackedLoader:
         """The next batch. If the filler thread has died, this raises what killed it instead of waiting."""
         while True:
             try:
-                return self.q.get(timeout=self.POLL)
+                item = self.q.get(timeout=self.POLL)
+                return self.ship.receive(item) if self.ship is not None else item
             except queue.Empty:
                 if self.error is not None:
                     raise RuntimeError("the loader thread died and took the run with it")                         from self.error
@@ -258,6 +270,8 @@ class PackedLoader:
 
     def close(self):
         self.stop.set()
+        if self.mask_fn is not None:
+            self.mask_fn.close()
 
 
 if __name__ == "__main__":
