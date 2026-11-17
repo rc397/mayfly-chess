@@ -262,11 +262,12 @@ def castle_by_king(ids, mv):
     return np.where(k & (mv == OOO_AS_ROOK), OOO_AS_KING, mv)
 
 
-def batch_tensors(rows, n_moves, temp=100.0, legal=False):
+def batch_tensors(rows, n_moves, temp=100.0, legal=False, mask_fn=None):
     """A slice of records to the arrays the model wants. Pure numpy, no Python loop over records.
 
     The policy target is a softmax over the top-5 centipawn scores, the same soft target the JSON
-    path built, so models trained either way are comparable.
+    path built, so models trained either way are comparable. mask_fn stands in for legal_mask
+    (loader_fast.LegalWorker runs the same function in another process); None is legal_mask here.
     """
     n = len(rows)
     ids = np.ascontiguousarray(rows["ids"]).astype(np.int64)
@@ -321,7 +322,7 @@ def batch_tensors(rows, n_moves, temp=100.0, legal=False):
                 else np.zeros(len(rows), np.float32)),
     }
     if legal:
-        m = legal_mask(rows, n_moves)
+        m = (mask_fn or legal_mask)(rows, n_moves)
         # The target is always reachable. A target move the decoded board calls illegal would get
         # zero probability under the mask, an infinite cross-entropy, so every target move is added
         # to the mask.

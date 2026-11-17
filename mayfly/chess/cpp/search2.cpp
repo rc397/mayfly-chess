@@ -60,6 +60,8 @@ void Tree::reset()
     root_ = nullptr;
     pool_.clear();
     cache_.clear();
+    old_.clear();
+    dropped_ = false;
     tb_.clear();
     history_.clear();
     st_ = Stats();
@@ -208,6 +210,37 @@ bool Tree::tb_value(const Node* n, double& v)
     return hit;
 }
 
+// cache_evict off: the one cache admits until it holds cache_size entries (the caller checks). On: the young
+// generation takes the entry; when it is full it becomes the old one and the old one is dropped. The first young
+// generation holds the larger half, so the first drop comes exactly where the one cache would have refused its
+// first entry, and before it every entry is kept, as there.
+void Tree::store(const CacheKey& k, CacheEntry&& e)
+{
+    const size_t cap = s_.cache_size;
+    if (!s_.cache_evict || cap < 2) {
+        if (cache_.size() < cap) cache_[k] = std::move(e);
+        return;
+    }
+    // a key the old generation holds (two leaves of one batch with the same position, a rotation between their
+    // stores) is written there, as the one cache overwrites it, so no key sits in both and none counts twice;
+    // after the first drop it moves to the young one instead
+    auto jt = old_.find(k);
+    if (jt != old_.end()) {
+        if (!dropped_) {
+            jt->second = std::move(e);
+            return;
+        }
+        old_.erase(jt);
+    }
+    const size_t lim = (!dropped_ && old_.empty()) ? cap - cap / 2 : cap / 2;
+    if (cache_.size() >= lim && !cache_.count(k)) {
+        if (!old_.empty()) dropped_ = true;
+        old_.swap(cache_);
+        cache_.clear();
+    }
+    cache_[k] = std::move(e);
+}
+
 static double now_s()
 {
     return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
@@ -285,12 +318,12 @@ int Tree::step(double target, double deadline)
                 }
                 collided.swap(keep);
             }
-            if (cache_.size() < s_.cache_size) {
+            if (s_.cache_evict || cache_.size() < s_.cache_size) {
                 CacheEntry e;
                 e.logits.assign(row, row + k);
                 e.raw = v;
                 e.q0.assign(qrow, qrow + k);
-                cache_[pd.key] = std::move(e);
+                store(pd.key, std::move(e));
             }
         }
     } catch (...) {
@@ -450,12 +483,12 @@ void Tree::complete(Flight& f, const Out& out, std::vector<std::pair<Path, Node*
                     lst->swap(keep);
                 }
             }
-            if (cache_.size() < s_.cache_size) {
+            if (s_.cache_evict || cache_.size() < s_.cache_size) {
                 CacheEntry e;
                 e.logits.assign(row, row + k);
                 e.raw = v;
                 e.q0.assign(qrow, qrow + k);
-                cache_[pd.key] = std::move(e);
+                store(pd.key, std::move(e));
             }
         }
     } catch (...) {
@@ -631,7 +664,11 @@ double Tree::expand(Node* node, const float* logits, double value, const float* 
     double mx = z[0];
     for (size_t i = 1; i < k; i++)
         if (z[i] > mx) mx = z[i];
+    // the scalar exp, one move at a time: MSVC is told not to vectorise this loop, gcc never vectorises exp
+    // without fast math (build_linux.sh passes -fno-fast-math)
+#ifdef _MSC_VER
 #pragma loop(no_vector)
+#endif
     for (size_t i = 0; i < k; i++) z[i] = std::exp(z[i] - mx);
     const double sum = 0.0 + pairwise(z.data(), k);
     node->P.resize(k);
@@ -851,6 +888,25 @@ void Tree::gather(Path& path, Node* parent, int a, std::vector<Pending>& pending
         const CacheEntry& e = it->second;
         backup(path, expand(kid, e.logits.data(), e.raw, e.q0.data(), (int)e.q0.size()));
         return;
+    }
+    if (s_.cache_evict) {
+        auto jt = old_.find(ck);
+        if (jt != old_.end()) {
+            st_.cache_hits++;
+            if (!dropped_) {
+                // nothing dropped yet: read in place, as the one cache would
+                const CacheEntry& e = jt->second;
+                backup(path, expand(kid, e.logits.data(), e.raw, e.q0.data(), (int)e.q0.size()));
+                return;
+            }
+            // a hit in the old generation moves back to the young one
+            CacheEntry e = std::move(jt->second);
+            old_.erase(jt);
+            const double v = expand(kid, e.logits.data(), e.raw, e.q0.data(), (int)e.q0.size());
+            store(ck, std::move(e));
+            backup(path, v);
+            return;
+        }
     }
     kid->pending = true;
     pending.push_back(Pending{path, kid, ck});

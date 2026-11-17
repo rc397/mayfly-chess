@@ -11,6 +11,7 @@ an index with a queen promotion there, but only one of the two can ever be legal
 """
 import chess
 import torch, torch.nn as nn
+import torch.nn.functional as F
 # re-exported for older imports, moves.py has the numbering without torch
 from moves import (N_MOVES, N_FROMTO, PROMO_IDX, IDX_PROMO, UNDERPROMOTIONS,
                    UCI_PROMO, move_to_idx, idx_to_move)
@@ -140,13 +141,43 @@ class ChessNet(nn.Module):
         self.mlh_detach = False
         self.mleft = (nn.Sequential(nn.Linear(d, 128), nn.GELU(), nn.Linear(128, 1))
                       if mlh else None)
+        # SDPA=1 in train_av runs the training forward's encoder through _encode_sdpa, the same
+        # parameters and the same function. Off by default, and eval mode never uses it.
+        self.fast_attn = False
+
+    def _encode_sdpa(self, x):
+        """nn.TransformerEncoder's training forward written out, with pre-norm, attention, exact
+        GELU and no dropout. Attention reads q, k and v as views of the packed projection and its
+        output is already (B, 65, d), so the transposes and the two copies nn.MultiheadAttention
+        makes around scaled_dot_product_attention are gone. The parameters are the same, so every
+        checkpoint loads unchanged."""
+        B, L, d = x.shape
+        for l in self.enc.layers:
+            a = l.self_attn
+            H = a.num_heads
+            h = F.layer_norm(x, (d,), l.norm1.weight, l.norm1.bias, l.norm1.eps)
+            qkv = F.linear(h, a.in_proj_weight, a.in_proj_bias).view(B, L, 3, H, d // H)
+            q, k, v = qkv.permute(2, 0, 3, 1, 4).unbind(0)                  # each (B, H, L, dk)
+            o = F.scaled_dot_product_attention(q, k, v).transpose(1, 2).reshape(B, L, d)
+            x = x + F.linear(o, a.out_proj.weight, a.out_proj.bias)
+            h = F.layer_norm(x, (d,), l.norm2.weight, l.norm2.bias, l.norm2.eps)
+            x = x + l.linear2(F.gelu(l.linear1(h)))
+        return x if self.enc.norm is None else self.enc.norm(x)
+
+    def _sdpa_ok(self):
+        # only where it is the same function, in training with no dropout on the layer this file builds
+        l = self.enc.layers[0]
+        return (self.fast_attn and self.training and l.dropout.p == 0.0 and l.norm_first
+                and l.activation is F.gelu and l.self_attn.batch_first)
 
     def num_params(self):
         return sum(p.numel() for p in self.parameters())
 
-    def forward(self, ids, cast, hm=None, ep=None):
+    def forward(self, ids, cast, hm=None, ep=None, split=None):
         """hm is the halfmove clock bucket, 0 to 100 or 101 for unknown. ep is the en passant
-        target as square plus one, zero for none, already in the side to move's frame."""
+        target as square plus one, zero for none, already in the side to move's frame.
+        split=n (HEAD_SPLIT=1 in train_av) runs the action-value heads on rows [:n] only and every
+        other head on rows [n:] only, the rows the trainer reads each of them on. h stays whole."""
         B = ids.shape[0]
         x = self.piece(ids) + self.pos(self.posidx)[None]              # (B,64,d)
         if ep is not None:
@@ -159,28 +190,35 @@ class ChessNet(nn.Module):
         cls = (self.cls.expand(B, -1, -1) + self.cast(cast)[:, None, :]
                + self.hm(hm)[:, None, :])                              # (B,1,d)
         x = torch.cat([cls, x], dim=1)                                 # (B,65,d)
-        z = self.enc(x)
+        z = self._encode_sdpa(x) if self._sdpa_ok() else self.enc(x)
         h = self.ln(z[:, 0])                                           # CLS -> (B,d)
+        hq = hp = h
+        if split is not None:
+            hq, hp = h[:split], h[split:]
         # h is returned so adapters and probes can use the trunk without a second forward pass
-        out = {"h": h, "policy": self.policy(h), "value": self.value(h).squeeze(-1),
-               "material": self.h_material(h), "king": self.h_king(h),
-               "pawns": self.h_pawns(h), "mob": self.h_mob(h).squeeze(-1),
-               "bishop": self.h_bishop(h)}
+        out = {"h": h, "policy": self.policy(hp), "value": self.value(hp).squeeze(-1),
+               "material": self.h_material(hp), "king": self.h_king(hp),
+               "pawns": self.h_pawns(hp), "mob": self.h_mob(hp).squeeze(-1),
+               "bishop": self.h_bishop(hp)}
         if self.qvalue is not None:
-            out["qvalue"] = self.qvalue(h)
+            out["qvalue"] = self.qvalue(hq)
         if self.att is not None:
             # while a new head is still random its gradient would only shake the trunk, so for a
             # while it learns on the trunk as it stands and is then trained end to end
             sq = z[:, 1:].detach() if self.att_detach else z[:, 1:]
-            s = self.ln_sq(sq)
-            out["policy_att"] = self.att(s)
-            out["qvalue_att"] = self.att_q(s)
+            if split is None:
+                s = self.ln_sq(sq)
+                out["policy_att"] = self.att(s)
+                out["qvalue_att"] = self.att_q(s)
+            else:
+                out["policy_att"] = self.att(self.ln_sq(sq[split:]))
+                out["qvalue_att"] = self.att_q(self.ln_sq(sq[:split]))
         if self.vdist is not None:
             # read-out only, it learns from the trunk but sends no gradient back into it, since
             # the search does not read the value head
-            out["vdist"] = self.vdist(h.detach())
+            out["vdist"] = self.vdist(hp.detach())
         if self.mleft is not None:
-            out["mleft"] = self.mleft(h.detach() if self.mlh_detach else h).squeeze(-1)
+            out["mleft"] = self.mleft(hp.detach() if self.mlh_detach else hp).squeeze(-1)
         return out
 
     def qdist_of(self, h, idx):

@@ -1352,7 +1352,7 @@ def version_catalogue():
     except Exception:
         rows = []
     out = []
-    for v in sorted(rows, key=lambda r: -int(r.get("version", 0))):
+    for v in sorted(rows, key=lambda r: -float(r.get("version", 0))):      # float: a point release such as 5.1
         f = v.get("file", "")
         if not f or not os.path.exists(os.path.join(vdir, f)):
             continue

@@ -1,0 +1,2 @@
+# shell scripts keep LF on a Windows checkout too, or bash on Linux reads the CR
+*.sh text eol=lf

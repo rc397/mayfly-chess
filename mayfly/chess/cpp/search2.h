@@ -40,7 +40,13 @@ struct Settings {
     double lcb_alpha = 0.00184487, lcb_floor = 0.0928919;
     bool prior_fallback = true;
     size_t cache_size = 400000;
-    bool use_tb = false;             // ask Net::tb at a new child (MCTS._gather's _tb_value), up to tb_pieces
+    // MCTS's cache_evict key, off by default. The cache is kept in two generations of half of cache_size. The
+    // young one takes every new entry. When it is full it becomes the old one and the old one is dropped, and a
+    // hit in the old one moves back to the young one. Nothing is dropped before cache_size entries are in, so
+    // the search is the same as with it off until the cache would have filled. After that it keeps admitting
+    // new entries where the plain cache stops.
+    bool cache_evict = false;
+    bool use_tb = false;            // ask Net::tb at a new child (MCTS._gather's _tb_value), up to tb_pieces
     int tb_pieces = 6;
     int pipeline = 0;                // MCTS's pipeline key, 0 off, 1 two batches of `batch` in flight, 2 two of half
     bool prof = false;               // time each part of a step into Tree::prof() (no effect on the search)
@@ -154,7 +160,7 @@ public:
     Node* root() const { return root_; }
     const Stats& stats() const { return st_; }
     size_t pool_size() const { return pool_.size(); }
-    size_t cache_len() const { return cache_.size(); }
+    size_t cache_len() const { return cache_.size() + old_.size(); }
 
 private:
     struct CacheKey {
@@ -198,6 +204,7 @@ private:
     int lcb_pick(Node* root);
     void keep_only(Node* r);                           // drop every node not reachable from r
     bool tb_value(const Node* n, double& v);          // the tablebase probe, remembered by (key, clock)
+    void store(const CacheKey& k, CacheEntry&& e);    // a new cache entry, under cache_size or cache_evict
 
     Net* net_;
     Settings s_;
@@ -206,7 +213,9 @@ private:
     std::vector<std::unique_ptr<Node>> pool_;
     std::unordered_set<Key, KeyHash> history_;
     std::unordered_map<CacheKey, CacheEntry, CacheKeyHash> cache_;
-    std::unordered_map<CacheKey, double, CacheKeyHash> tb_;   // NaN when not in the tables
+    std::unordered_map<CacheKey, CacheEntry, CacheKeyHash> old_;   // cache_evict's old generation
+    bool dropped_ = false;                                         // cache_evict has dropped a generation
+    std::unordered_map<CacheKey, double, CacheKeyHash> tb_;  // NaN when not in the tables
     std::vector<std::pair<Path, Node*>>* collided_ = nullptr;
     Flight fly_;
     Prof pf_;

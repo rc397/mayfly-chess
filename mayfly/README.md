@@ -89,7 +89,7 @@ chess/                     the engine, the trainer, the data tools and the measu
   timectl.py               time management
   uci.py                   the UCI engine
   play_web.py              a board in the browser
-  train_av.py              the trainer (PyTorch)
+  train_av.py              the trainer (PyTorch); muon.py and loader_fast.py are its optional parts
   train_jax.py             the trainer in JAX for TPUs (train_xla.py is a PyTorch/XLA fallback)
   data_av.py, data_packed.py, pack.py, pack_av.py    record formats and loaders
   chessbench.py, fetch_lichess_evals.py, lichess_to_av.py, lc0_convert.py, lc0_pool.py    data conversion
@@ -99,6 +99,8 @@ chess/                     the engine, the trainer, the data tools and the measu
   elo_vs_sf.py, clock_match.py, search_match.py, round_robin.py    matches and ladders
   tactics_suite.py, lichess_puzzles.py, opening_suite.py, blunder_suite.py    position suites
   harness.py, selftest.py  tests, among them that sealed versions still play the same moves
+  test_uci_compliance.py   the engine driven through UCI the way a GUI does, then games against itself
+  make_release.py, mayfly_uci.sh    a Linux release bundle and its launcher
   paths.py                 where data lives
   native/                  C modules for the Python search (selection, move generation, tree walk)
   cpp/                     the C++ search tree and its LibTorch network backend
@@ -127,10 +129,13 @@ pip install -r requirements.txt
 
 ### Where data goes
 
-Everything the code reads or writes lives under one folder, set by `MAYFLY_DATA` and by default `data/` next to the
-repository (`chess/paths.py`). Checkpoints go to `data/ckpt`, frozen versions to `data/versions`, training shards to
-`data/shards` and self-play to `data/selfplay`. A script that has its own variable for a path (`CKPT_DIR`, `SHARDS`,
-`VERSION_DIR`, `SELFPLAY_DIR` and others) still reads it first.
+Everything the code reads or writes lives under one folder, set by `MAYFLY_DATA` and by default `data/` inside this
+`mayfly/` folder, beside `chess/` (`chess/paths.py`). Checkpoints go to `data/ckpt`, frozen versions to
+`data/versions`, training shards to `data/shards` and self-play to `data/selfplay`. A script that has its own
+variable for a path (`CKPT_DIR`, `SHARDS`, `VERSION_DIR`, `SELFPLAY_DIR` and others) still reads it first.
+
+A checkout from before the code moved into `mayfly/` kept `data/` at the top of the repository. Either set
+`MAYFLY_DATA` to that folder or move it into `mayfly/`.
 
 Trained weights are not part of the repository. A version is a checkpoint such as `data/versions/mayfly_v6.pt`,
 listed in `data/versions/versions.json` with the search settings it was sealed with.
@@ -180,6 +185,12 @@ picks the file in `data/versions` (for example `VERSION=mayfly_v6.pt`), and each
 sealed with. Under a clock the time manager decides the visits, and `VISITS` is only used when no clock or node count
 is given. `go wtime ... btime ...`, `go movetime`, `go nodes`, `go infinite` and pondering are supported.
 
+UCI options: `Version` (a version that is not on disk is refused and the current one stays), `Visits`, `Ponder`,
+`SyzygyPath` (one or more tablebase folders) and `Move Overhead` (milliseconds a move costs beyond the search, -1 for
+pricing by the gap between moves). `chess/test_uci_compliance.py` drives the engine the way a GUI does and then plays
+games of it against itself. On Linux, `chess/make_release.py` packs the engine, one version and its sealed search
+into one archive, started by `chess/mayfly_uci.sh`.
+
 ```
 python chess/play_web.py
 ```
@@ -208,7 +219,16 @@ python chess/train_av.py
 The trainer's settings are environment variables, listed at the top of `chess/train_av.py`. It writes checkpoints to
 `data/ckpt` and freezes versions into `data/versions` at set training hours. `chess/cooldown.py` makes a release
 candidate by cooling a copy of the run. `chess/train_jax.py` takes the same settings on a TPU host and reads and
-writes the same checkpoint format, so a run can move between a GPU and a TPU.
+writes the same checkpoint format, so a run can move between a GPU and a TPU. `chess/val_point.py` validates a
+checkpoint trained elsewhere and adds its point to the curve.
+
+Settings added since v6, all off by default: `W_LZQ` takes a share of the action-value loss from the policy rows'
+own teacher values (Leela's search value of the best move), `SV_SHARE` puts MayFly's self-play visit targets into the
+policy batch (`chess/pack_selfplay_visits.py` writes those `sv_` shards), `ACCUM` and `LR_SCALE` add batches up into
+one larger optimiser step, `OPTIM=muon` steps the trunk's weight matrices with orthogonalised momentum
+(`chess/muon.py`), `EMA` keeps averaged weights beside the live ones, and `LOADER_PIN` and `LEGAL_WORKER` take the
+loaders' copies and legality masks off the training step (`chess/loader_fast.py`, checked by
+`chess/loader_fast_check.py`).
 
 Self-play data comes from `chess/selfplay.py` (positions from MayFly's own games) and `chess/deep_label.py` (Stockfish
 scores for their top moves), written as `dp_` shards.

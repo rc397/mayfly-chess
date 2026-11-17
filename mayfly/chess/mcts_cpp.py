@@ -73,6 +73,7 @@ def covers(tree):
         ("value_from_q", bool(tree.value_from_q)),
         ("mcgs", not tree.mcgs),
         ("pipeline", not tree.pipeline or hasattr(mayfly_cppsearch.Tree, "finish")),
+        ("cache_evict", not getattr(tree, "cache_evict", False) or hasattr(mayfly_cppsearch, "CACHE_EVICT")),
         ("proofs", not tree.proofs),
         ("root_check", not tree.root_check),
         ("root_noise", not tree.root_noise),
@@ -111,6 +112,8 @@ def _settings(tree):
     cfg["tb_pieces"] = float(TB_PIECES)
     if tree.pipeline:                # only when on, so a tree without it is made exactly as before
         cfg["pipeline"] = float(tree.pipeline)
+    if getattr(tree, "cache_evict", False):    # the same: only when on
+        cfg["cache_evict"] = 1.0
     return cfg
 
 

@@ -26,7 +26,7 @@ import paths  # noqa: E402
 E = os.environ.get
 OUT = E("SP_DATASET_DIR", paths.under("kaggle", "sp_dataset"))
 VDIR = E("VERSION_DIR", paths.under("versions"))
-VERSION = E("SP_VERSION", "mayfly_v6.pt")      # the version that plays; written to sp_version.json
+VERSION = E("SP_VERSION", "mayfly_v6.1.pt")      # the version that plays; written to sp_version.json
 CKPT = E("SP_CKPT", os.path.join(VDIR, VERSION))
 CODE = ["selfplay_remote.py", "selfplay.py", "mcts.py", "chess_net.py", "chessnet_jax.py", "encode.py", "moves.py",
         "lc0_moves.py", "book.py", "kaggle_selfplay.py", "tpu_bench.py", "paths.py", "mcts_cpp.py"]
@@ -71,7 +71,7 @@ def build():
     meta = {"title": "mayfly-selfplay", "id": SLUG, "licenses": [{"name": "other"}]}
     with open(os.path.join(OUT, "dataset-metadata.json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, indent=1)
-    for f in sorted(os.listdir(OUT)):
+    for f in sorted(x for x in os.listdir(OUT) if os.path.isfile(os.path.join(OUT, x))):
         print(f"  {f:28s} {os.path.getsize(os.path.join(OUT, f)) / 1e6:9.2f} MB")
 
 
@@ -86,7 +86,8 @@ def upload():
         r = k("datasets", "version", "-p", d, "-m", time.strftime("self-play code %Y-%m-%d %H:%M"))
     else:
         r = k("datasets", "create", "-p", d)
-    print((r.stdout or "")[-800:], (r.stderr or "")[-800:])
+    out = (r.stdout or "")[-800:] + " " + (r.stderr or "")[-800:]
+    print(out.encode("ascii", "replace").decode(), flush=True)      # the tool's output may not fit the console's encoding
     return r.returncode == 0
 
 

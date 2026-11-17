@@ -66,14 +66,17 @@ def score(model, dev):
 
 def main():
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    paths = sorted(glob.glob(os.path.join(VERSIONS, f"{TAG}_v*.pt")),
-                   key=lambda p: int(os.path.basename(p).split("_v")[1].split(".")[0]))
-    paths.append(os.path.join(CKPT_DIR, f"ckpt_{TAG}_last.pt"))
+    def number(p):                                   # mayfly_v6.1.pt -> "6.1"
+        return os.path.basename(p).split("_v")[1][:-len(".pt")]
+
+    # checkpoints from v5 on carry no version number, so the file name decides
+    paths = [(f"v{number(p)}", p) for p in sorted(glob.glob(os.path.join(VERSIONS, f"{TAG}_v*.pt")),
+                                                  key=lambda p: float(number(p)))]
+    paths.append(("live", os.path.join(CKPT_DIR, f"ckpt_{TAG}_last.pt")))
     out = {}
-    for path in paths:
+    for name, path in paths:
         model, hours, version, it = load(path, dev)
         s, n = score(model, dev)
-        name = f"v{version}" if version else "live"
         out[name] = {"hours": hours, "iter": it, "positions": n, **{k: round(v, 4) for k, v in s.items()}}
         print(f"{name:5} {hours or 0:6.1f}h  " + "  ".join(f"{k} {100 * v:5.1f}%" for k, v in s.items()), flush=True)
         del model
