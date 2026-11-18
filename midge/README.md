@@ -71,17 +71,22 @@ above: 12 openings, each from both sides, on another machine, with Stockfish jud
 ### MayFly and Midge together
 
 The question behind Midge is whether MayFly plays better with Midge checking its moves. Midge searches on spare
-CPU cores while MayFly thinks, and steps in only when MayFly's chosen move looks clearly worse to it. Both tests
+CPU cores while MayFly thinks, and steps in only when MayFly's chosen move looks clearly worse to it. Duo 3 tries
+the other way round: Midge never overrules MayFly, it only suggests a move before MayFly searches. All three tests
 play the pair against MayFly v6.1 alone, 60 s + 1 s, on one machine (RTX 5070 Ti, i7-14700F).
 
-| version | when Midge steps in | games | wins-draws-losses | score | Elo difference (95%) |
+| version | how Midge takes part | games | wins-draws-losses | score | Elo difference (95%) |
 |---|---|---|---|---|---|
 | duo 1 | MayFly's move gives up 0.20 or more of Midge's win chance | 11 | 1-9-1 | 50.0% | stopped early |
 | duo 2 | the same at 0.10, plus clearly won positions and time trouble | 100 | 5-89-6 | 49.5% | -3 (-26 to +19) |
+| duo 3 | a hint, never an override: its best move gets a quarter of MayFly's first guesses | 100 | 5-93-2 | 51.5% | +10 (-8 to +28) |
 
 In duo 2 Midge changed MayFly's move on 131 of 6,858 moves (1.9%), and its checks added about 20 ms a move on
-average. The time trouble rule never triggered. So far the pair is not measurably stronger than MayFly alone.
-The duo 2 interval is over single games.
+average. The time trouble rule never triggered. In duo 3 Midge looked at each position first, 150,000 nodes on
+one thread (about 110 ms, taken from MayFly's clock). Its move was not the first choice of MayFly's network on
+52% of moves, and in those MayFly went on to play it about a third of the time. So far the pair is not
+measurably stronger than MayFly alone. The intervals are over single games; over pairs of games from the same
+opening, duo 3's is -5 to +26.
 
 ## Threads and time
 
