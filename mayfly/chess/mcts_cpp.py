@@ -180,9 +180,27 @@ def trace_for(tree):
     A trace is used only when its sidecar fingerprint matches the weights the tree holds, and the answer is
     remembered per tree. With cuda_net on, a .cnw of this network comes first (pyext builds the tree on
     chess/cudanet from it), and if none is found it warns and uses the trace."""
-    if tree.device == "cpu" or tree.model is None:
+    if tree.device == "cpu":
         return None
     want_cnw = bool(getattr(tree, "cuda_net", False))
+    if tree.model is None:
+        # No PyTorch model in this process (the Windows engine download, uci.load_without_torch). The .cnw named
+        # for the version is used when its header carries the fingerprint the version's row records.
+        if getattr(tree, "_cpp_ts_checked", None) == want_cnw:
+            return tree._cpp_ts_ok
+        tree._cpp_ts_checked = want_cnw
+        tree._cpp_ts_ok = None
+        want = getattr(tree, "weights_fingerprint", None)
+        if want_cnw and want:
+            for cnw in _cnw_candidates(tree):
+                try:
+                    if os.path.exists(cnw) and cnw_fingerprint(cnw) == want:
+                        _warn(f"cuda_net: the hand-tuned CUDA net from {cnw}")
+                        tree._cpp_ts_ok = cnw
+                        break
+                except (OSError, ValueError) as e:
+                    _warn(f"{cnw} unreadable ({type(e).__name__}); not used")
+        return tree._cpp_ts_ok
     if getattr(tree, "_cpp_ts_checked", None) == want_cnw:
         return tree._cpp_ts_ok
     tree._cpp_ts_checked = want_cnw

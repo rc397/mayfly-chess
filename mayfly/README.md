@@ -101,6 +101,7 @@ chess/                     the engine, the trainer, the data tools and the measu
   harness.py, selftest.py  tests, among them that sealed versions still play the same moves
   test_uci_compliance.py   the engine driven through UCI the way a GUI does, then games against itself
   make_release.py, mayfly_uci.sh    a Linux release bundle and its launcher
+  make_engine_download.py  the Windows engine download (no PyTorch), with cpp/build_notorch.bat
   paths.py                 where data lives
   native/                  C modules for the Python search (selection, move generation, tree walk)
   cpp/                     the C++ search tree and its LibTorch network backend
@@ -190,6 +191,16 @@ UCI options: `Version` (a version that is not on disk is refused and the current
 pricing by the gap between moves). `chess/test_uci_compliance.py` drives the engine the way a GUI does and then plays
 games of it against itself. On Linux, `chess/make_release.py` packs the engine, one version and its sealed search
 into one archive, started by `chess/mayfly_uci.sh`.
+
+### The Windows download
+
+The releases page also has MayFly as a ready UCI engine for Windows: a folder with `mayfly.exe` that needs no
+Python and no PyTorch. In it the search and the network both run in the C++ module, on the CUDA backend, so it
+needs an NVIDIA card and holds one version sealed with `cuda_net`. When PyTorch is not installed, `uci.py` starts
+the same way from a checkout (`load_without_torch`): the tree gets no model, and the version's `.cnw` file is
+used when its header carries the fingerprint recorded in the version's row. `chess/cpp/build_notorch.bat` builds
+the module with the CUDA net only, and `chess/make_engine_download.py` packs the folder with the four NVIDIA
+libraries and two headers the CUDA net needs, which stay under NVIDIA's own licence.
 
 ```
 python chess/play_web.py
