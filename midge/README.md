@@ -133,6 +133,8 @@ other pair of time controls has been played.
 - Training data: 300,461,680 positions from Leela Chess Zero self-play games, each labelled with the value
   Leela's own search gave it. Positions where Leela's best move was a capture were left out. No other engine's
   code or network weights are used anywhere; Stockfish and other engines appear only as test opponents.
+  Leela Chess Zero's training data is made available under the Open Database License (ODbL) 1.0 (see
+  nets/NETS.md).
 - The source also holds a small `veto` command (does a given move lose material by force?). It is used by an
   experiment that pairs Midge with MayFly and plays no part in Midge's own games.
 
