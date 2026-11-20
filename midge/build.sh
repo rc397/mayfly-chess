@@ -11,7 +11,8 @@
 #   DEV=1 ./build.sh                 a test build: the search test switches are listed as UCI options
 #   STATIC=0 ./build.sh              Linux only: link libc from the system instead of into the file
 #   OUT=name ./build.sh              the output file name inside build/ (default: midge)
-#   NET=../nets/midge_v5h512.bin ./build.sh     also copies that net to build/midge_net.bin, which the engine
+#   NET=../nets/midge_v5h512.bin ./build.sh     that net is BUILT INTO the binary (it needs no net file), unless
+#                                               EMBED=0; it is also copied to build/midge_net.bin, which the engine
 #                                               loads by itself at start (the net must match H and KB)
 # Output: build/midge (build/midge.exe on Windows) and build/perft.
 # Tested: Windows (MSYS2 g++ 14.2) and Linux (Ubuntu 24.04, g++ 13.3). After a build, "build/midge bench 12"
@@ -24,6 +25,8 @@ KB=${KB:-1}
 OUT=${OUT:-midge}
 FLAGS="-O3 -std=c++20 -Wall -DNDEBUG -march=$ARCH -DMIDGE_H=$H -DMIDGE_KB=$KB -pthread"
 if [ -n "$VERSION" ]; then FLAGS="$FLAGS -DMIDGE_VERSION=\"$VERSION\""; fi
+mkdir -p build
+if [ -n "$NET" ] && [ "$EMBED" != "0" ]; then cp "$NET" build/embed_net.bin; FLAGS="$FLAGS -DMIDGE_EMBED"; fi
 if [ "$DEV" = "1" ]; then FLAGS="$FLAGS -DMIDGE_DEV"; fi
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*) FLAGS="$FLAGS -static"; EXE=.exe ;;       # one file, no MSYS DLLs needed

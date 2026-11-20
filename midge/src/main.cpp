@@ -39,6 +39,9 @@ static void copy_settings(Search &d, const Search &s) {
   d.timescale = s.timescale; d.rfp_m = s.rfp_m; d.fut_b = s.fut_b; d.fut_m = s.fut_m; d.lmp_b = s.lmp_b;
   d.overhead = s.overhead; d.nmp = s.nmp; d.nmpv = s.nmpv;
   d.seeq = s.seeq; d.tmstab = s.tmstab; d.singx = s.singx; d.caph = s.caph; d.probcut = s.probcut;
+  d.histp = s.histp; d.phist = s.phist; d.cont4 = s.cont4; d.prevb = s.prevb; d.lmrx = s.lmrx; d.corrx = s.corrx;
+  d.qlazy = s.qlazy; d.ttfirst = s.ttfirst; d.tmx = s.tmx;
+  for (const Tunable &t : TUNABLES) d.*(t.p) = s.*(t.p);
   memcpy(d.lmr, s.lmr, sizeof d.lmr);
 }
 static const char *START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -158,6 +161,13 @@ static void go(std::istringstream &is) {
   });
 }
 
+static std::string net_from;                 // where the network in use came from, for "info string"
+#ifdef MIDGE_DEV
+static const bool DEV_BUILD = true;          // the Eval option and the veto command exist in a DEV build only
+#else
+static const bool DEV_BUILD = false;
+#endif
+
 static void bench(int depth) {
   const char *fens[] = {
       START,
@@ -187,16 +197,28 @@ static void bench(int depth) {
   fflush(stdout);
 }
 
+// LmrBase / LmrDiv (x100) as set by setoption; the defaults are the search's own init_lmr(0.8, 2.3)
+static int lmr_base_x100 = 80, lmr_div_x100 = 230;
+
 int main(int argc, char **argv) {
   tables::init();
   pos.set_fen(START);
   S.pos = &pos;
-  // a net named midge_net.bin beside the exe (or in the working folder) is loaded at start
+  // the network: the one built into the binary first; a net named midge_net.bin beside the exe (or in the working
+  // folder) takes its place when there is one; EvalFile takes the place of both
   {
     std::string self = argc > 0 ? argv[0] : "", err;
+    nnue::load_embedded(err);
     size_t cut = self.find_last_of("/\\");
     std::string dir = cut == std::string::npos ? "" : self.substr(0, cut + 1);
-    if (!nnue::load(dir + "midge_net.bin", err) && !dir.empty()) nnue::load("midge_net.bin", err);
+    bool built_in = nnue::loaded;
+    bool file = nnue::load(dir + "midge_net.bin", err) || (!dir.empty() && nnue::load("midge_net.bin", err));
+    net_from = file ? "midge_net.bin" : "built in";
+    if (!file && !built_in)
+      nnue::no_net_exit(err.rfind("cannot open", 0) == 0 ? "no net is built into this program and no midge_net.bin was found"
+                                                          : "midge_net.bin could not be used: " + err);
+    if (!file && err.rfind("cannot open", 0) != 0)   // a net file is there but is not usable: said, not hidden
+      printf("info string midge_net.bin could not be used (%s): the built-in net is used\n", err.c_str());
   }
   std::string line;
   if (argc > 1 && std::string(argv[1]) == "bench") { bench(argc > 2 ? atoi(argv[2]) : 12); return 0; }
@@ -208,6 +230,7 @@ int main(int argc, char **argv) {
       printf("id name Midge %s\nid author Ryan Chen\n", MIDGE_VERSION);
       printf("option name Threads type spin default 1 min 1 max 1024\n");
       printf("option name Hash type spin default 64 min 1 max 1048576\n");
+      printf("option name MultiPV type spin default 1 min 1 max 16\n");
       printf("option name Ponder type check default false\n");
       printf("option name MoveOverhead type spin default 50 min 0 max 5000\n");
       printf("option name EvalFile type string default <none>\n");
@@ -220,6 +243,8 @@ int main(int argc, char **argv) {
       printf("option name CorrHist type check default false\n");
       printf("option name TimeScale type spin default 160 min 20 max 400\n");
       printf("option name LmrDiv type spin default 230 min 100 max 500\n");
+      printf("option name LmrBase type spin default 80 min 0 max 300\n");
+      printf("option name QLazy type spin default 0 min 0 max 2000\n");
       printf("option name RfpMargin type spin default 80 min 20 max 300\n");
       printf("option name FutBase type spin default 100 min 0 max 400\n");
       printf("option name FutMul type spin default 90 min 20 max 300\n");
@@ -231,8 +256,18 @@ int main(int argc, char **argv) {
       printf("option name SingularX type check default false\n");
       printf("option name CapHist type check default false\n");
       printf("option name ProbCut type spin default 0 min 0 max 600\n");
+      printf("option name HistPrune type spin default 0 min 0 max 20000\n");
+      printf("option name PawnHist type check default false\n");
+      printf("option name Cont4 type check default false\n");
+      printf("option name PriorBonus type check default false\n");
+      printf("option name LmrX type spin default 0 min 0 max 31\n");
+      printf("option name CorrX type spin default 0 min 0 max 300\n");
+      printf("option name TTWays type spin default 1 min 1 max 4\n");
+      printf("option name TmX type check default false\n");
+      printf("option name TtFirst type check default false\n");
+      for (const Tunable &t : TUNABLES) printf("option name T_%s type spin default %d min %d max %d\n", t.name, S.*(t.p), t.lo, t.hi);
 #endif
-      printf("info string net %s\n", nnue::loaded ? "loaded" : "NOT loaded (set EvalFile, or put midge_net.bin beside the exe)");
+      printf("info string net loaded (%s)\n", net_from.c_str());
       printf("uciok\n");
     } else if (cmd == "isready") {
       // ready means the helper threads of a new Threads value are built; a running search is not waited for
@@ -254,20 +289,25 @@ int main(int argc, char **argv) {
       if (name == "Threads") {
         set_threads(std::clamp(atoi(value.c_str()), 1, 1024));
         S.tt->clear_threads = nthreads;
+      } else if (name == "MultiPV") {
+        S.multipv = std::clamp(atoi(value.c_str()), 1, 16);
       } else if (name == "Hash") {
         S.tt->resize(std::clamp(atoi(value.c_str()), 1, 1048576));
         printf("info string hash table %llu MB\n", (unsigned long long)((S.tt->mask + 1) * sizeof(TTEntry) >> 20));
       }
       else if (name == "EvalFile") {
         std::string err;
-        if (nnue::load(value, err)) printf("info string loaded %s\n", value.c_str());
-        else printf("info string EvalFile failed: %s\n", err.c_str());
-      } else if (name == "Eval") S.eval_mode = value == "material" ? EV_MATERIAL : value == "hand" ? EV_HAND : EV_NNUE;
+        if (value.empty() || value == "<none>") {}     // the option's default, sent back by some GUIs: no change
+        else if (nnue::load(value, err)) { net_from = value; printf("info string loaded %s\n", value.c_str()); }
+        else nnue::no_net_exit("EvalFile " + value + ": " + err);   // never a silent return to the net before
+      } else if (name == "Eval" && DEV_BUILD) S.eval_mode = value == "material" ? EV_MATERIAL : value == "hand" ? EV_HAND : EV_NNUE;
       else if (name == "QChecks") S.qchecks = value == "true";
       else if (name == "Singular") S.singular = value == "true";
       else if (name == "ContHist") S.contw = value == "true";
       else if (name == "CorrHist") S.corrw = value == "true";
-      else if (name == "LmrDiv") S.init_lmr(0.8, std::clamp(atoi(value.c_str()), 100, 500) / 100.0);
+      else if (name == "LmrDiv") { lmr_div_x100 = std::clamp(atoi(value.c_str()), 100, 500); S.init_lmr(lmr_base_x100 / 100.0, lmr_div_x100 / 100.0); }
+      else if (name == "LmrBase") { lmr_base_x100 = std::clamp(atoi(value.c_str()), 0, 300); S.init_lmr(lmr_base_x100 / 100.0, lmr_div_x100 / 100.0); }
+      else if (name == "QLazy") S.qlazy = std::clamp(atoi(value.c_str()), 0, 2000);
       else if (name == "RfpMargin") S.rfp_m = atoi(value.c_str());
       else if (name == "FutBase") S.fut_b = atoi(value.c_str());
       else if (name == "FutMul") S.fut_m = atoi(value.c_str());
@@ -279,6 +319,19 @@ int main(int argc, char **argv) {
       else if (name == "SingularX") S.singx = value == "true";
       else if (name == "CapHist") S.caph = value == "true";
       else if (name == "ProbCut") S.probcut = atoi(value.c_str());
+      else if (name == "HistPrune") S.histp = atoi(value.c_str());
+      else if (name == "PawnHist") S.phist = value == "true";
+      else if (name == "Cont4") S.cont4 = value == "true";
+      else if (name == "PriorBonus") S.prevb = value == "true";
+      else if (name == "LmrX") S.lmrx = atoi(value.c_str());
+      else if (name == "CorrX") S.corrx = atoi(value.c_str());
+      else if (name == "TTWays") { S.tt->ways = atoi(value.c_str()) == 4 ? 4 : 1; S.tt->clear(); }
+      else if (name == "TmX") S.tmx = value == "true";
+      else if (name == "TtFirst") S.ttfirst = value == "true";
+      else if (name.rfind("T_", 0) == 0) {
+        for (const Tunable &t : TUNABLES)
+          if (name.substr(2) == t.name) S.*(t.p) = std::clamp(atoi(value.c_str()), t.lo, t.hi);
+      }
       else if (name == "MoveOverhead") S.overhead = std::clamp(atoi(value.c_str()), 0, 5000);
       else if (name == "TimeScale") S.timescale = std::clamp(atoi(value.c_str()), 20, 400);
     } else if (cmd == "position") { join(); set_position(is); }
@@ -360,10 +413,9 @@ int main(int argc, char **argv) {
     } else if (cmd == "bench") { join(); int d = 12; is >> d; S.pos = &pos; bench(d); pos.set_fen(START); }
     else if (cmd == "eval") {
       join(); S.pos = &pos; S.acc->reset();
-      printf("material %d hand %d", handeval::material(pos), handeval::evaluate(pos));
-      if (nnue::loaded) printf(" nnue %d", nnue::evaluate(pos, *S.acc));
-      printf("\n");
-    } else if (cmd == "veto") {
+      if (DEV_BUILD) printf("material %d hand %d ", handeval::material(pos), handeval::evaluate(pos));
+      printf("nnue %d\n", nnue::evaluate(pos, *S.acc));
+    } else if (cmd == "veto" && DEV_BUILD) {
       // veto move M [depth D] [mode forcing|full] [eval material|hand|nnue] [margin T]
       join(); S.pos = &pos;
       std::string tok, ms; int d = 6, margin = 200; bool full = false; int ev = EV_MATERIAL;

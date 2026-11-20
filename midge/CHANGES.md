@@ -3,6 +3,24 @@
 Every strength number is from self-play at short time controls on one laptop (one thread, 200-position opening
 book, each opening from both sides) with its 95% interval over opening pairs, unless it says otherwise.
 
+## Since 0.2 (not released yet)
+
+Check of a build: `midge bench 12` with the release network still prints 723006 nodes, so the engine plays
+the same moves as 0.2 at its default settings.
+
+- The network can be built into the executable (`NET=` in build.sh), so a download needs no separate net file.
+- No weak stand-in any more: if there is no usable network, the engine prints an error (on standard output and
+  standard error) and exits with code 1, at start or when EvalFile names a file it cannot use. An EvalFile of
+  `<none>` or empty, which some GUIs send back as the default, changes nothing. A broken `midge_net.bin` beside
+  an executable that has a network built in is reported and the built-in network is used.
+- The hand-made and material-only evaluations exist only in test builds (`DEV=1`), with the other search test
+  switches, which are listed as UCI options there.
+- Each side's pieces other than pawns have their own hash key now, for test switches that correct the static
+  score; nothing uses them in a normal build.
+
+Tested: Windows (MSYS2 g++ 14.2) and Linux (g++ 13.3): bench 723006 with the built-in network; every way of
+having no network ends with the error. Not tested yet: clang, the king-bucket build.
+
 ## 0.2 (17 November 2026)
 
 Check of a build: `midge bench 12` with the release network prints 723006 nodes.
