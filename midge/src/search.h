@@ -196,11 +196,13 @@ struct Search {
   std::atomic<bool> pondering{false};    // go ponder: no clock until ponderhit
   std::atomic<int64_t> start_us{0};      // when the clock of this search started
   bool timed = false;
-  Move killers[MAXPLY + 2][2];
-  int hist[2][64][64];
+  // Every table below starts at zero. A helper thread's Search is made on the heap, where memory is not zero by
+  // itself: a release build with 2 threads read tables that were never set and crashed (found 21 Nov 2026).
+  Move killers[MAXPLY + 2][2] = {};
+  int hist[2][64][64] = {};
   // continuation history: (piece and target of the move 1 or 2 plies back) -> (piece and target of this move)
   std::vector<int> cont = std::vector<int>(12 * 64 * 12 * 64, 0);
-  int mpc[MAXPLY + 2];
+  int mpc[MAXPLY + 2] = {};
   int &ch(int ppc, int pto, int pc, int to) { return cont[((ppc * 64 + pto) * 12 + pc) * 64 + to]; }
   int qhist(int ply, Move m, int pc) {
     int h = hist[pos->side][mfrom(m)][mto(m)];
@@ -211,12 +213,12 @@ struct Search {
     if (phist) h += phv(pc, mto(m));
     return h;
   }
-  Move counter[64][64];
-  Move pv[MAXPLY + 1][MAXPLY + 1];
-  int pvlen[MAXPLY + 1];
-  int sev[MAXPLY + 2];
-  Move played[MAXPLY + 2];
-  int lmr[64][64];
+  Move counter[64][64] = {};
+  Move pv[MAXPLY + 1][MAXPLY + 1] = {};
+  int pvlen[MAXPLY + 1] = {};
+  int sev[MAXPLY + 2] = {};
+  Move played[MAXPLY + 2] = {};
+  int lmr[64][64] = {};
   std::vector<Move> rootonly;
   int multipv = 1;               // MultiPV: how many root moves the main thread reports at each depth
   std::vector<Move> rootskip;    // root moves left out of this search (the better lines, for MultiPV)
