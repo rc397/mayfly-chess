@@ -138,12 +138,13 @@ struct Position {
   int board[64];
   int side, castle, ep, rule50, sp;
   U64 key, pkey;   // pkey: pawns only
+  U64 npkey[2] = {0, 0};   // each colour's pieces other than pawns, the king too (for the static-score corrections)
   Undo st[MAXSP];
   U64 keys[MAXSP];
   Dirty dirty[MAXSP];
 
-  void put(int s, int p) { board[s] = p; bb[p] |= sqbb(s); occ[pc_color(p)] |= sqbb(s); occ[2] |= sqbb(s); key ^= Zpsq[p][s]; if (pc_type(p) == PAWN) pkey ^= Zpsq[p][s]; }
-  void remove(int s) { int p = board[s]; board[s] = NO_PIECE; bb[p] ^= sqbb(s); occ[pc_color(p)] ^= sqbb(s); occ[2] ^= sqbb(s); key ^= Zpsq[p][s]; if (pc_type(p) == PAWN) pkey ^= Zpsq[p][s]; }
+  void put(int s, int p) { board[s] = p; bb[p] |= sqbb(s); occ[pc_color(p)] |= sqbb(s); occ[2] |= sqbb(s); key ^= Zpsq[p][s]; if (pc_type(p) == PAWN) pkey ^= Zpsq[p][s]; else npkey[pc_color(p)] ^= Zpsq[p][s]; }
+  void remove(int s) { int p = board[s]; board[s] = NO_PIECE; bb[p] ^= sqbb(s); occ[pc_color(p)] ^= sqbb(s); occ[2] ^= sqbb(s); key ^= Zpsq[p][s]; if (pc_type(p) == PAWN) pkey ^= Zpsq[p][s]; else npkey[pc_color(p)] ^= Zpsq[p][s]; }
   void move_pc(int f, int t) { int p = board[f]; remove(f); put(t, p); }
   U64 pieces(int c, int t) const { return bb[pc_make(c, t)]; }
   int king_sq(int c) const { return lsb(bb[pc_make(c, KING)]); }
@@ -173,7 +174,7 @@ struct Position {
     if (!(is >> fm)) fm = 1;
     memset(bb, 0, sizeof bb); memset(occ, 0, sizeof occ);
     for (int i = 0; i < 64; i++) board[i] = NO_PIECE;
-    key = 0; pkey = 0;
+    key = 0; pkey = 0; npkey[0] = npkey[1] = 0;
     int r = 7, f = 0;
     for (char ch : b) {
       if (ch == '/') { r--; f = 0; continue; }

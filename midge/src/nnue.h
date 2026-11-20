@@ -3,7 +3,10 @@
 // count. int16 weights: feature layer at scale QA, output at scale QB. Written from scratch, 17 Nov 2026.
 #pragma once
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <fstream>
+#include <sstream>
 #include <vector>
 #if defined(__AVX2__)
 #include <immintrin.h>
@@ -52,9 +55,7 @@ inline int feat(int c, int pc, int sq, int kc) {
 }
 
 // file: "MIDG", version, H, NB, QA, QB (int32 each), cp_scale (float), then w1, b1, w2 (int16), b2 (int32)
-inline bool load(const std::string &path, std::string &err) {
-  std::ifstream f(path, std::ios::binary);
-  if (!f) { err = "cannot open " + path; return false; }
+inline bool load_stream(std::istream &f, std::string &err) {
   char mg[4]; int32_t hd[5], kb = 1; float sc;
   f.read(mg, 4); f.read((char *)hd, sizeof hd);
   if (hd[0] == 2) f.read((char *)&kb, 4);   // version 2 carries the king bucket count
@@ -62,13 +63,52 @@ inline bool load(const std::string &path, std::string &err) {
   if (memcmp(mg, "MIDG", 4) || (hd[0] != 1 && hd[0] != 2) || hd[1] != H || hd[2] != NB || hd[3] != QA || hd[4] != QB || kb != KB) {
     err = "header does not match this build (H " + std::to_string(H) + ", KB " + std::to_string(KB) + ")"; return false;
   }
-  if (!net) net = new Net;
-  f.read((char *)net->w1, sizeof net->w1); f.read((char *)net->b1, sizeof net->b1);
-  f.read((char *)net->w2, sizeof net->w2); f.read((char *)net->b2, sizeof net->b2);
-  if (!f) { err = "file too short"; return false; }
-  net->cp_scale = sc;
+  Net *t = new Net;                            // read aside first: a short file must not spoil the net in use
+  f.read((char *)t->w1, sizeof t->w1); f.read((char *)t->b1, sizeof t->b1);
+  f.read((char *)t->w2, sizeof t->w2); f.read((char *)t->b2, sizeof t->b2);
+  if (!f) { delete t; err = "file too short"; return false; }
+  t->cp_scale = sc;
+  if (!net) net = t;
+  else { *net = *t; delete t; }
   loaded = true;
   return true;
+}
+inline bool load(const std::string &path, std::string &err) {
+  std::ifstream f(path, std::ios::binary);
+  if (!f) { err = "cannot open " + path; return false; }
+  return load_stream(f, err);
+}
+
+// The default network inside the binary (build.sh with NET=...): the file's bytes are placed in the program by the
+// assembler, between two labels. Without it an engine that finds no net file has only the stand-in evaluation.
+#ifdef MIDGE_EMBED
+#ifdef _WIN32
+__asm__(".section .rdata,\"dr\"\n.balign 64\n.globl midge_embed_a\nmidge_embed_a:\n.incbin \"build/embed_net.bin\"\n"
+        ".globl midge_embed_z\nmidge_embed_z:\n.text\n");
+#else
+__asm__(".section .rodata\n.balign 64\n.globl midge_embed_a\nmidge_embed_a:\n.incbin \"build/embed_net.bin\"\n"
+        ".globl midge_embed_z\nmidge_embed_z:\n.text\n");
+#endif
+extern "C" const char midge_embed_a[], midge_embed_z[];
+inline const bool embedded = true;
+inline bool load_embedded(std::string &err) {
+  std::istringstream f(std::string(midge_embed_a, (size_t)(midge_embed_z - midge_embed_a)), std::ios::binary);
+  return load_stream(f, err);
+}
+#else
+inline const bool embedded = false;
+inline bool load_embedded(std::string &err) { err = "no network was built into this binary"; return false; }
+#endif
+// Midge does not play without its network: the reason goes to stdout (as an info string, for a GUI's log) and to
+// stderr, then the program leaves with exit code 1. A clean exit, never a search on something else.
+[[noreturn]] inline void no_net_exit(const std::string &why) {
+  std::string m = "ERROR: no network (" + why + "). Midge needs its network and does not play without it. "
+                  "Put midge_net.bin beside the program, or set the UCI option EvalFile to the path of a net file.";
+  printf("info string %s\n", m.c_str());
+  fflush(stdout);
+  fprintf(stderr, "%s\n", m.c_str());
+  fflush(stderr);
+  std::exit(1);
 }
 
 inline void add_row(int16_t *a, int fi) { const int16_t *w = net->w1[fi]; for (int i = 0; i < H; i++) a[i] += w[i]; }
@@ -82,6 +122,24 @@ inline void refresh_one(const Position &p, int16_t *a, int c) {
 }
 inline void refresh(const Position &p, Acc &a) { refresh_one(p, a.v[0], 0); refresh_one(p, a.v[1], 1); }
 
+// One move from the accumulator just below, in one pass over the rows: a quiet move (one piece from, to) or a
+// plain capture (the mover from, to, the captured piece off). The same sums as the general path, in fewer passes.
+inline bool fused(const Dirty &d, const int16_t *src, int16_t *a, int c, int kc) {
+  if (d.n == 1 && d.from[0] >= 0 && d.to[0] >= 0) {
+    const int16_t *wf = net->w1[feat(c, d.pc[0], d.from[0], kc)], *wt = net->w1[feat(c, d.pc[0], d.to[0], kc)];
+    for (int i = 0; i < H; i++) a[i] = int16_t(src[i] - wf[i] + wt[i]);
+    return true;
+  }
+  const int mv = d.to[0] >= 0 ? 0 : 1, rm = 1 - mv;   // a capture is written as the captured piece, then the mover
+  if (d.n == 2 && d.from[mv] >= 0 && d.to[mv] >= 0 && d.from[rm] >= 0 && d.to[rm] < 0) {
+    const int16_t *wf = net->w1[feat(c, d.pc[mv], d.from[mv], kc)], *wt = net->w1[feat(c, d.pc[mv], d.to[mv], kc)];
+    const int16_t *wc = net->w1[feat(c, d.pc[rm], d.from[rm], kc)];
+    for (int i = 0; i < H; i++) a[i] = int16_t(src[i] - wf[i] + wt[i] - wc[i]);
+    return true;
+  }
+  return false;
+}
+
 // bring the accumulator at p.sp up to date from the nearest computed one below (lazy, so pruned moves cost nothing);
 // a side whose king changed bucket or mirror on the way is rebuilt from the board
 inline Acc &update(const Position &p, AccStack &st) {
@@ -91,6 +149,37 @@ inline Acc &update(const Position &p, AccStack &st) {
   while (j > 0 && !computed[j] && top - j < 24) j--;
   if (!computed[j]) { refresh(p, accs[top]); computed[top] = true; return accs[top]; }
   if (j == top) return accs[top];
+  // Several moves since the last sums that were kept (19 Nov 2026): the sums of every position on the way are built
+  // and kept, not only the last one, so the next move tried from any of them starts one step away. The same sums
+  // as before. With king buckets this is done only when neither king changed its bucket or mirror on the way.
+  if (j + 1 < top) {
+    int kcs[2] = {kclass(0, p.king_sq(0)), kclass(1, p.king_sq(1))};
+    bool whole = true;
+    for (int i = j + 1; i <= top && KB > 1 && whole; i++) {
+      const Dirty &d = p.dirty[i];
+      for (int k = 0; k < d.n; k++)
+        if (pc_type(d.pc[k]) == KING && d.to[k] >= 0) {
+          int c = pc_color(d.pc[k]);
+          if (kclass(c, d.from[k]) != kcs[c] || kclass(c, d.to[k]) != kcs[c]) whole = false;
+        }
+    }
+    if (whole) {
+      for (int i = j + 1; i <= top; i++) {
+        const Dirty &d = p.dirty[i];
+        for (int c = 0; c < 2; c++) {
+          int16_t *a = accs[i].v[c];
+          if (fused(d, accs[i - 1].v[c], a, c, kcs[c])) continue;
+          memcpy(a, accs[i - 1].v[c], sizeof(int16_t) * H);
+          for (int k = 0; k < d.n; k++) {
+            if (d.from[k] >= 0) sub_row(a, feat(c, d.pc[k], d.from[k], kcs[c]));
+            if (d.to[k] >= 0) add_row(a, feat(c, d.pc[k], d.to[k], kcs[c]));
+          }
+        }
+        computed[i] = true;
+      }
+      return accs[top];
+    }
+  }
   for (int c = 0; c < 2; c++) {
     int kc = kclass(c, p.king_sq(c)), king = pc_make(c, KING);
     bool rebuild = false;
@@ -101,6 +190,7 @@ inline Acc &update(const Position &p, AccStack &st) {
     }
     int16_t *a = accs[top].v[c];
     if (rebuild) { refresh_one(p, a, c); continue; }
+    if (j + 1 == top && fused(p.dirty[top], accs[j].v[c], a, c, kc)) continue;
     memcpy(a, accs[j].v[c], sizeof(int16_t) * H);
     for (int i = j + 1; i <= top; i++) {
       const Dirty &d = p.dirty[i];

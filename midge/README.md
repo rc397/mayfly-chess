@@ -31,6 +31,9 @@ the [releases page](https://github.com/rc397/mayfly-chess/releases):
 Point any UCI host (a GUI such as Cute Chess, Arena or Banksia, or a match runner such as cutechess-cli) at the
 executable. Keep `midge_net.bin` in the same folder. After `uci` the engine prints `info string net loaded`;
 if it prints `net NOT loaded`, the file is missing and the engine falls back to a weak hand-made evaluation.
+That is how the 0.2 executables behave. The source here has changed since: a build made with `NET=` carries
+the network inside the executable, and a build that has no usable network prints an error and stops instead
+of playing weakly (see CHANGES.md).
 
 UCI options:
 
@@ -141,7 +144,9 @@ You need g++ 13 or later (or clang++), on Linux or on Windows under MSYS2.
     H=512 VERSION=0.2 ARCH=x86-64 ./build.sh     # for any 64-bit CPU
     build/midge bench 12                         # prints a node count; it must match the one in CHANGES.md
 
-Put the network file beside the executable as `midge_net.bin`.
+Put the network file beside the executable as `midge_net.bin`. To build the network into the executable
+instead, name it in the build: `NET=path/to/midge_net.bin H=512 ./build.sh` (the release network is
+`midge_net.bin` from the 0.2 download).
 
 ## Tested, and not tested
 
