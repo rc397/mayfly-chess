@@ -42,8 +42,7 @@ README = """\
 {line}
 
 MayFly is a chess engine: a transformer network of about 146 million parameters searched with a batched PUCT
-tree. This folder is MayFly as a UCI engine for Windows, with the search this version was sealed with. It is a
-beta of version 7, not an official release.
+tree. This folder is MayFly as a UCI engine for Windows, with the search this version was sealed with.{beta}
 
 Source code, results and the licence: https://github.com/rc397/mayfly-chess
 
@@ -177,7 +176,8 @@ def main():
         shutil.copy2(p, os.path.join(pkg, "cuda", os.path.basename(p)))
     files = "\n".join(f"  cuda\\{os.path.basename(p)}" for p in dlls + heads)
     with open(os.path.join(pkg, "README.txt"), "w", encoding="utf-8", newline="\r\n") as fh:
-        fh.write(README.format(name=name, line="=" * len(name)))
+        beta = "\nIt is a beta, not an official release." if "beta" in name.lower() else ""
+        fh.write(README.format(name=name, line="=" * len(name), beta=beta))
     with open(os.path.join(pkg, "THIRD_PARTY.txt"), "w", encoding="utf-8", newline="\r\n") as fh:
         fh.write(THIRD_PARTY.format(files=files, cuda=a.cuda_version, eula=EULA))
     shutil.copy2(os.path.join(REPO, "LICENSE"), os.path.join(pkg, "LICENSE.txt"))
