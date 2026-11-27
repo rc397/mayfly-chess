@@ -38,15 +38,29 @@ NVIDIA, AMD and Intel graphics, and its source is in [chess/volunteer](chess/vol
 
 ## Results
 
-These are measured results for v6, the latest released version (24 October 2026), and for the CUDA backend. The
+These are measured results for v7, the latest released version (27 November 2026), and for the CUDA backend. The
 research notes they come from are summarised in [docs/](docs/).
 
 ### Against Stockfish
 
-Stockfish 18 at 100 ms a move with 2 threads and a 256 MB hash, 24 games for each cell. A level is held when MayFly
-scores more than half the points.
+Stockfish 18 at 100 ms a move with 2 threads, a 256 MB hash and Syzygy tablebases, 24 games for each cell. A level
+is held when MayFly scores more than half the points. The levels above Skill 20 are Skill 20 with more time a move
+for Stockfish (level 23 is Skill 20 at 283 ms).
 
-| MayFly v6 | highest level held | first level failed |
+From v7 the tests start from unbalanced openings: twelve positions from Stockfish's UHO book, each about a pawn
+unbalanced and played from both sides. From balanced openings most games against the top levels were draws.
+
+| MayFly v7, unbalanced openings | highest level held | first level failed |
+|---|---|---|
+| network alone, no search | Skill 9, 75.0% | Skill 10, 37.5% |
+| 400 visits a move | Skill 19, 72.9% | Skill 20, 25.0% |
+| 1,600 visits a move | Skill 20, 54.2% | not played above Skill 20 |
+| 6,400 visits a move | level 22, 54.2% | level 23, 39.6% |
+
+From the balanced openings v6 was measured on, v7 at 6,400 visits scored 52.1% against Skill 20, 50.0% at level 21,
+54.2% at level 22 and 47.9% at level 23.
+
+| MayFly v6, balanced openings | highest level held | first level failed |
 |---|---|---|
 | network alone, no search | Skill 8, 54.2% | Skill 9, 43.8% |
 | 400 visits a move | Skill 13, 60.4% | Skill 14, 47.9% |

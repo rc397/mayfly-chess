@@ -13,7 +13,7 @@ Each folder has its own README with results, how to build it and how to play it.
 
 ## Latest results
 
-- MayFly v6.1 is the current release ([results](mayfly/README.md#results), [download](https://github.com/rc397/mayfly-chess/releases/latest)).
+- MayFly v7 is the current release ([results](mayfly/README.md#results), [download](https://github.com/rc397/mayfly-chess/releases/latest)).
 - Midge 0.2 is the first version of Midge, with its full source in [midge](midge): 75 wins, 21 draws and 4 losses
   in 100 games against Critter 1.6a at 180 s + 3 s (85.5%, +308 Elo, 95% interval +243 to +397), one thread each
   ([results, speed and what was tested](midge/README.md), [changes](midge/CHANGES.md)).
